@@ -41,6 +41,19 @@ investigate*, never a buy signal.
   over a one-dimensional outlier.
 - **Data quality**: a high score built on many `null` signals is fragile — say so.
 - **Fit**: note sector/style so the shortlist is not all one bet (e.g. all banks).
+- **Long-term quality** *(for a buy-and-hold investor)*: quality + momentum
+  together is more actionable for long-term holding than momentum alone. Look for
+  names where ROE is high, revenue is growing above GDP, and the business has
+  demonstrated earnings/FCF compounding over 3–5Y. A score driven purely by
+  short-term price momentum with weak quality signals is a *trade*, not an
+  *investment*.
+- **Dividend fit**: if the investor seeks income, flag whether a candidate pays
+  a dividend and whether it is FCF-covered (FCFE / Dividends ≥ 1.0). Flag
+  high-yield candidates with poor FCF coverage explicitly as yield-trap risk.
+- **WSE sentiment check**: for WSE-listed names, search for recent ESPI filings,
+  Biznesradar.pl headlines, or StockWatch news. Thin analyst coverage (< 5
+  opinions) lowers confidence in consensus targets — say so and rely more on the
+  fundamental sub-scores. Note any major shareholder crossing a ±5% threshold.
 
 ## Output (markdown)
 - **Ranked shortlist table**: symbol, name, screen score, the 3 sub-scores, and

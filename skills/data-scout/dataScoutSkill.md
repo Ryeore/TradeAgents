@@ -26,9 +26,17 @@ freshest possible facts on the table for the rest of the desk.
    say so.
 
 ## Output (markdown)
-- **Snapshot table**: price, day & 52-wk range, market cap, P/E, EPS (TTM/fwd).
+- **Snapshot table**: price, day & 52-wk range, market cap, P/E (TTM & fwd),
+  EPS (TTM / Next FY / FY+2 extrapolated).
 - **Earnings**: last quarter EPS actual vs consensus, surprise %, next date.
 - **Street view**: mean/low/high target, implied upside %, rating, # analysts.
+- **Forward estimates table** *(from `forward_estimates` in fetch_fundamentals)*:
+  | Period | EPS est. | Revenue est. | # Analysts |
+  |--------|----------|--------------|------------|
+  | Next FY (direct) | `eps_next_fy` | `revenue_next_fy` | `*_num_analysts` |
+  | FY+2 (extrapolated ⚠️) | `eps_2y_ahead_est` | `revenue_2y_ahead_est` | — |
+  | 2Y avg EPS growth | `eps_2y_avg_growth_pct`% | — | — |
+  Flag analyst count < 3 as thin coverage. Mark extrapolated values with ⚠️.
 - **Breaking news**: 3–5 dated bullets, each with a one-line "why it matters".
 - **Data freshness note**: flag anything you could not verify live.
 
