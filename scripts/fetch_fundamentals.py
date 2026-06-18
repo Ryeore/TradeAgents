@@ -57,6 +57,69 @@ def best_effort_roic(ticker) -> float | None:
         return None
 
 
+def get_forward_estimates(ticker) -> dict:
+    """Extract analyst forward estimates for the next 1–2 fiscal years.
+
+    yfinance provides +1y directly. +2y is extrapolated by applying the
+    same year-on-year growth rate a second time — clearly flagged in output.
+    Returns a dict with all values or None when data is unavailable.
+    """
+    result: dict = {
+        "eps_next_fy": None,
+        "eps_next_fy_num_analysts": None,
+        "eps_2y_ahead_est": None,
+        "eps_2y_avg_growth_pct": None,
+        "revenue_next_fy": None,
+        "revenue_next_fy_num_analysts": None,
+        "revenue_2y_ahead_est": None,
+        "estimate_note": None,
+    }
+    try:
+        ee = ticker.earnings_estimate
+        re = ticker.revenue_estimate
+        notes = []
+
+        if ee is not None and not ee.empty and "+1y" in ee.index:
+            row_1y = ee.loc["+1y"]
+            eps_1y = float(row_1y["avg"]) if row_1y["avg"] is not None else None
+            result["eps_next_fy"] = round_or_none(eps_1y)
+            n = row_1y.get("numberOfAnalysts")
+            result["eps_next_fy_num_analysts"] = int(n) if n is not None else None
+
+            # 2Y extrapolation: apply +1y growth again
+            growth_1y = float(row_1y["growth"]) if row_1y.get("growth") is not None else None
+            if eps_1y is not None and growth_1y is not None:
+                eps_2y = eps_1y * (1.0 + growth_1y)
+                result["eps_2y_ahead_est"] = round_or_none(eps_2y)
+                notes.append("+2y EPS extrapolated (applying +1y growth rate a second time)")
+
+            # 2Y avg annual growth: CAGR from 0y to +1y
+            if "0y" in ee.index:
+                eps_0y = float(ee.loc["0y"]["avg"]) if ee.loc["0y"]["avg"] is not None else None
+                if eps_0y and eps_1y and eps_0y > 0:
+                    cagr_2y = round_or_none((((eps_1y / eps_0y) ** 0.5) - 1.0) * 100)
+                    result["eps_2y_avg_growth_pct"] = cagr_2y
+
+        if re is not None and not re.empty and "+1y" in re.index:
+            row_r1y = re.loc["+1y"]
+            rev_1y = float(row_r1y["avg"]) if row_r1y["avg"] is not None else None
+            result["revenue_next_fy"] = rev_1y
+            n = row_r1y.get("numberOfAnalysts")
+            result["revenue_next_fy_num_analysts"] = int(n) if n is not None else None
+
+            growth_r1y = float(row_r1y["growth"]) if row_r1y.get("growth") is not None else None
+            if rev_1y is not None and growth_r1y is not None:
+                rev_2y = rev_1y * (1.0 + growth_r1y)
+                result["revenue_2y_ahead_est"] = rev_2y
+                notes.append("+2y Revenue extrapolated (applying +1y growth rate a second time)")
+
+        if notes:
+            result["estimate_note"] = "; ".join(notes)
+    except Exception:
+        pass
+    return result
+
+
 def main() -> None:
     symbol = require_symbol(sys.argv)
     ticker = get_ticker(symbol)
@@ -111,8 +174,10 @@ def main() -> None:
             else round_or_none(info.get("dividendYield")),
             "payout_ratio_pct": pct("payoutRatio"),
         },
+        "forward_estimates": get_forward_estimates(ticker),
         "note": "roic_pct_est is approximated from yfinance statements (EBIT*(1-tax)/invested "
-                "capital). Treat as directional, not GAAP-exact.",
+                "capital). Treat as directional, not GAAP-exact. "
+                "forward_estimates +2y values are extrapolated, not directly sourced.",
     })
 
 

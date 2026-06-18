@@ -1,0 +1,148 @@
+# WSE Universe — WIG20 + mWIG40 + sWIG80 (140 stocks)
+# Source: StockWatch.pl / Wikipedia — constituents as of 2026-06-18
+# Used by: python scripts/screen_candidates.py --universe watchlists/wse_blue.txt
+# Note: yfinance coverage is partial for sWIG80 small-caps; null fields are flagged automatically.
+
+# ── WIG20 (20 large-caps) ─────────────────────────────────────────────────────
+PKO.WA       # PKO Bank Polski
+PKN.WA       # PKN Orlen
+PEO.WA       # Bank Pekao
+KGH.WA       # KGHM Polska Miedź
+PZU.WA       # PZU
+LPP.WA       # LPP
+SPL.WA       # Erste Bank Polska (formerly Santander Bank Polska)
+ALE.WA       # Allegro
+CDR.WA       # CD Projekt
+DNP.WA       # Dino Polska
+MBK.WA       # mBank
+ZAB.WA       # Żabka
+ALR.WA       # Alior Bank
+KTY.WA       # Grupa Kęty
+TPE.WA       # Tauron
+PGE.WA       # PGE
+BDX.WA       # Budimex
+KRU.WA       # Kruk
+PCO.WA       # Pepco
+MDV.WA       # Modivo (formerly CCC)
+
+# ── mWIG40 (40 mid-caps) ──────────────────────────────────────────────────────
+AB.WA        # AB SA (electronics distribution)
+EAT.WA       # AmRest Holdings
+ACP.WA       # Asseco Poland
+DOM.WA       # Dom Development
+EUR.WA       # Eurocash
+BHW.WA       # Bank Handlowy (Citi)
+ING.WA       # ING Bank Śląski
+CAR.WA       # Inter Cars
+DVL.WA       # Develia
+LBW.WA       # Lubawa
+MIL.WA       # Bank Millennium
+PEP.WA       # Polenergia
+PXM.WA       # Polimex-Mostostal
+NEU.WA       # Neuca
+OPL.WA       # Orange Polska
+RBW.WA       # Rainbow Tours
+ASB.WA       # ASBIS Enterprises
+CPS.WA       # Cyfrowy Polsat
+ATT.WA       # Grupa Azoty
+ENA.WA       # Enea
+MRB.WA       # Mirbud
+ASEE.WA      # Asseco South Eastern Europe
+MBR.WA       # Mo-Bruk
+GPW.WA       # Giełda Papierów Wartościowych (Warsaw Stock Exchange)
+BFT.WA       # Benefit Systems
+JSW.WA       # JSW (Jastrzębska Spółka Węglowa)
+SNT.WA       # Synektik
+VOX.WA       # Voxel
+NWG.WA       # Newag
+TXT.WA       # Text SA (LiveChat)
+WPL.WA       # Wirtualna Polska
+BNP.WA       # BNP Paribas Bank Polska
+XTB.WA       # XTB
+APR.WA       # Auto Partner
+CBF.WA       # Cyber_Folks
+TEN.WA       # Ten Square Games
+VRC.WA       # Vercom
+CRO.WA       # Creotech Instruments
+PRG.WA       # Pracuj Group
+DIA.WA       # Diagnostyka
+
+# ── sWIG80 (80 small-caps) ────────────────────────────────────────────────────
+ELT.WA       # Electrotim
+AGO.WA       # Agora
+AMB.WA       # Ambra
+AMC.WA       # Amica
+APT.WA       # Apator
+AST.WA       # Astarta
+BIO.WA       # Bioton
+BRS.WA       # Boryszew
+BOS.WA       # Bank Ochrony Środowiska
+CMP.WA       # Comp
+DCR.WA       # Decora
+ECH.WA       # Echo Investment
+ERB.WA       # Erbud
+FTE.WA       # Forte
+KGN.WA       # Kogeneracja
+MCI.WA       # MCI Capital
+MNC.WA       # Mennica Polska
+MSZ.WA       # Mostostal Zabrze
+SNK.WA       # Sanok Rubber Company
+FVK.WA       # Śnieżka (Fabryka Farb i Lakierów)
+STA.WA       # Stalexport Autostrady
+STP.WA       # Stalprodukt
+SGN.WA       # Sygnity
+VRG.WA       # VRG (formerly Vistula)
+WWL.WA       # Wawel
+OPN.WA       # Oponeo.pl
+ABS.WA       # Asseco Business Solutions
+CIG.WA       # CI Games
+WLT.WA       # Wielton
+UNI.WA       # Unibep
+SLF.WA       # Selena FM
+ZRE.WA       # Zremb
+QRS.WA       # Quercus TFI
+ATR.WA       # Atrem
+BMC.WA       # Bumech
+CGN.WA       # Cognor
+LWB.WA       # Bogdanka (LW Bogdanka)
+ATC.WA       # Arctic Paper
+FRO.WA       # Ferro
+11B.WA       # 11 bit studios
+DNT.WA       # Digitanet
+VTM.WA       # Votum
+BLO.WA       # Bloober Team
+RVU.WA       # Ryvu Therapeutics
+ACG.WA       # AC SA (autogaz)
+TOA.WA       # Toya
+ALL.WA       # Ailleron
+MGM.WA       # Medicalgorithmics
+DWK.WA       # DataWalk
+UNT.WA       # Unimot
+ZEP.WA       # ZE PAK
+TAR.WA       # Tarczyński
+MLP.WA       # MLP Group
+MRC.WA       # Mercator Medical
+PCR.WA       # PCC Rokita
+TRP.WA       # Torpol
+VGP.WA       # Vigo Photonics
+ATL.WA       # Atal
+WIT.WA       # Wittchen
+ENT.WA       # Enter Air
+ARH.WA       # Archicom
+CEL.WA       # Celon Pharma
+PLW.WA       # PlayWay
+CRJ.WA       # Creepy Jar
+MDN.WA       # Medinice
+SLV.WA       # Selvita
+DAD.WA       # Dadelo
+AWR.WA       # Answear
+HUG.WA       # Huuuge
+CTX.WA       # CapTor Rx
+SHO.WA       # Shoper
+OND.WA       # ONDE
+BCX.WA       # Bioceltix
+GRX.WA       # GreenX Metals
+SCW.WA       # Scanway
+MRP.WA       # Murapol
+ARN.WA       # Arlen
+CRQ.WA       # CR Quantum

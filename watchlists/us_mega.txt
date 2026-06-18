@@ -1,0 +1,13 @@
+# US Mega-cap tickers
+# Used by: python scripts/screen_candidates.py --universe watchlists/us_mega.txt
+AAPL
+MSFT
+NVDA
+GOOGL
+AMZN
+META
+AVGO
+TSLA
+VICI
+PLD
+O

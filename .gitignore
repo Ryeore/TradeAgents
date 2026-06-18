@@ -8,6 +8,7 @@ env/
 
 # Output / cache
 reports/
+output/
 *.json.cache
 .cache/
 

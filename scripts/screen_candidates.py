@@ -118,8 +118,10 @@ def load_universe(args):
     tickers = list(PRESETS.get(args.preset, [])) if args.preset else []
     if args.universe:
         with open(args.universe, "r", encoding="utf-8") as fh:
-            tickers += [ln.strip().upper() for ln in fh
-                        if ln.strip() and not ln.startswith("#")]
+            for ln in fh:
+                ticker = ln.split("#")[0].strip().upper()
+                if ticker:
+                    tickers.append(ticker)
     tickers += [t.upper() for t in args.tickers]
     seen, out = set(), []
     for t in tickers:

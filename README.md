@@ -43,7 +43,7 @@ Chartist ───┘                                    scorecard)     stop, ta
 ## Setup
 
 ```powershell
-cd C:\Users\A497929\projects\stock-skills
+cd C:\Users\kamil\Desktop\Projects\TradeAgents
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -129,10 +129,12 @@ Default weights live in `scripts/scorecard.py` and can be overridden per thesis.
 ## Repo layout
 
 ```
-stock-skills/
+TradeAgents/
 ├─ README.md
 ├─ requirements.txt
 ├─ lib/common.py            # yfinance wrappers + indicators (RSI, MFI, ATR, Fib)
 ├─ scripts/                 # deterministic data + math tools (JSON out)
-└─ skills/                  # the 9 analysts + analyst-desk orchestrator
+├─ skills/                  # the 10 analysts + analyst-desk orchestrator
+├─ watchlists/              # ticker lists for screen_candidates.py
+└─ output/                  # auto-generated reports (gitignored)
 ```
