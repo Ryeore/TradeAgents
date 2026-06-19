@@ -9,19 +9,7 @@ description: >-
 name: Analyst Desk
 argument-hint: "<TICKER | portfolio + budget> [account value] [risk tolerance]"
 tools: [agent, read, execute, web, todo]
-agents:
-  [
-    opportunity-scout,
-    data-scout,
-    macro-strategist,
-    data-hunter,
-    sentiment-analyst,
-    the-chartist,
-    the-bear,
-    devils-advocate,
-    the-cio,
-    portfolio-manager,
-  ]
+agents: ['*']
 ---
 
 You are the **Analyst Desk** orchestrator. You run a 9-seat investment committee
