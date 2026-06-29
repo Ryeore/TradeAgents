@@ -38,50 +38,57 @@ actionability.
 ### Mode B pipeline
 
 **Step 1 — Portfolio snapshot**
+Announce: `⚙ Scripts — _portfolio_check.py (all holdings)`
 Run `_portfolio_check.py` (or equivalent) to get current prices and P&L for all
 holdings. If no script exists, run `fetch_quote.py` on each ticker.
+Announce result: `✓ Scripts — portfolio priced, total value = X PLN`
 
 **Step 2 — Technicals sweep (The Chartist)**
-Run `fetch_technicals.py` on every holding. Delegate to **the-chartist** with
-all 13 (or N) technical outputs in one prompt. Ask for:
+Announce: `⚙ Scripts — fetch_technicals.py × <N> holdings (batched)`
+Run `fetch_technicals.py` on every holding in a single batched command.
+Announce: `✓ Scripts — technicals collected`
+Announce: `▶ The Chartist — ranking all <N> positions by add-to-position attractiveness`
+Delegate to **The Chartist** with all technical outputs in one prompt. Ask for:
 - A ranked table of all positions by "add-to-position attractiveness" (1–10).
 - Top 3 candidates with specific entry zones and ATR values.
 - An explicit AVOID list with one-line rationale per name.
+Announce result: `✓ The Chartist — top picks: <ticker> (<score>), <ticker> (<score>) | avoid: <tickers>`
 
 **Step 3 — Quote sweep**
-Run `fetch_quote.py` on the top candidates identified by the Chartist (typically
-the top 4–5 by score). Capture analyst targets, upside %, and consensus.
+Announce: `⚙ Scripts — fetch_quote.py × top <N> candidates`
+Run `fetch_quote.py` on the top candidates. Capture analyst targets, upside %, consensus.
+Announce: `✓ Scripts — quotes collected`
 
 **Step 4 — Fundamentals & sentiment (top candidates only)**
+Announce: `⚙ Scripts — fetch_fundamentals.py + fetch_sentiment.py × top 3`
 Run `fetch_fundamentals.py` and `fetch_sentiment.py` on the top 3 candidates
-only. Do NOT run these on the full universe — it wastes time and the data is not
-needed for the avoided names.
+only. Do NOT run these on the full universe.
+Announce: `✓ Scripts — fundamentals and sentiment collected`
 
 **Step 5 — Scorecard (The CIO)**
-Run `scorecard.py` for each top candidate using the five sub-scores:
-- Valuation (from fundamentals + analyst target vs price)
-- Quality (from fundamentals: margins, ROIC, growth)
-- Technical (from Chartist score)
-- Sentiment (from sentiment data + analyst consensus)
-- Macro (sector regime, rate sensitivity)
-
-Delegate to **the-cio** with all prior data. Ask for:
+Announce: `⚙ Scripts — scorecard.py × <N> candidates`
+Run `scorecard.py` for each top candidate.
+Announce: `✓ Scripts — <ticker> <score>, <ticker> <score>, <ticker> <score>`
+Announce: `▶ The CIO — allocation verdict across top candidates`
+Delegate to **The CIO** with all prior data. Ask for:
 - Comparative composite scores for all candidates.
 - A definitive allocation split of the stated budget (e.g., 60% to A, 40% to B).
 - An explicit AVOID/HOLD list.
 - "What would change my mind" for the top pick.
+Announce result: `✓ The CIO — <verdict summary, e.g. "BUY SNT.WA 3 000 PLN, ACCUMULATE CBF.WA 2 000 PLN">`
 
 **Step 6 — Trade plan (Portfolio Manager)**
-Run `position_sizer.py` for each allocated name using:
-- `--price` from technicals, `--atr` from technicals, `--conviction` from CIO
-  composite score, `--account` = total portfolio value including cash budget.
-
-Delegate to **portfolio-manager** with CIO verdict + sizer outputs. Ask for:
+Announce: `⚙ Scripts — position_sizer.py × <N> names`
+Run `position_sizer.py` for each allocated name.
+Announce: `✓ Scripts — sizing complete`
+Announce: `▶ Portfolio Manager — building order ticket and DCA plan`
+Delegate to **Portfolio Manager** with CIO verdict + sizer outputs. Ask for:
 - Immediate market orders vs GTC limit orders (DCA tranches).
 - Stop loss applied to total position (existing shares + new).
 - T1 and T2 targets with trim actions.
 - Order ticket checklist (actionable bullet list).
 - Post-deployment portfolio composition table.
+Announce result: `✓ Portfolio Manager — plan ready`
 
 ---
 
@@ -130,6 +137,45 @@ Delegate to **portfolio-manager** with CIO verdict + sizer outputs. Ask for:
 
 ---
 
+## Critical: announce every step in chat
+
+Before AND after each subagent delegation or script batch, post a short status
+line to the chat so the user can follow progress in real time. Use this exact
+format — one line, bold agent name, emoji indicator, one-sentence status:
+
+**Before delegating:**
+> `▶ [Agent Name] — <what it is about to do>`
+
+**After receiving the result:**
+> `✓ [Agent Name] — <one-line key finding or output, e.g. "top pick: SNT.WA (score 7), ATR = 11.80">`
+
+**Before running scripts (batched):**
+> `⚙ Scripts — <which scripts, which tickers>`
+
+**After scripts complete:**
+> `✓ Scripts — done (<N> tickers)`
+
+Do NOT dump raw script JSON into the chat. Summarise in one sentence.
+Never skip these announcements — they are the user's only window into the pipeline.
+
+Example sequence the user should see:
+```
+⚙ Scripts — _portfolio_check.py + fetch_technicals.py × 13 holdings
+✓ Scripts — done (13 tickers, P&L and technicals collected)
+▶ The Chartist — ranking all 13 positions by add-to-position attractiveness
+✓ The Chartist — top picks: SNT.WA (7), CBF.WA (7), PLD (7) | avoid: ACP.WA, MBR.WA, VICI
+⚙ Scripts — fetch_quote.py + fetch_fundamentals.py + fetch_sentiment.py × top 3
+✓ Scripts — done
+⚙ Scripts — scorecard.py × 3 candidates
+✓ Scripts — SNT.WA 6.75, CBF.WA 6.05, KRU.WA 6.0
+▶ The CIO — allocation verdict across top candidates
+✓ The CIO — BUY SNT.WA (3 000 PLN), ACCUMULATE CBF.WA (2 000 PLN), KRU.WA watchlist
+⚙ Scripts — position_sizer.py × 2 names
+✓ Scripts — done
+▶ Portfolio Manager — building order ticket
+✓ Portfolio Manager — plan ready
+```
+
 ## Critical: subagents are stateless
 
 Each subagent runs in isolation. When delegating, pass the full text of every
@@ -169,20 +215,26 @@ portfolio-manager  (order ticket + stop/target table + post-deploy summary)
 ## Mode A pipeline order
 
 ```
-data-scout (1)
-    ├── macro-strategist (2)   ← parallel
-    ├── data-hunter (3)        ← parallel
-    └── sentiment-analyst (4)  ← parallel
+▶ Data Scout (1)
+    ├── ▶ Macro Strategist (2)   ← parallel
+    ├── ▶ Data Hunter (3)        ← parallel
+    └── ▶ Sentiment Analyst (4)  ← parallel
             ↓
-    the-bear (5)
-    the-chartist (6)
+    ▶ The Bear (5)
+    ▶ The Chartist (6)
             ↓
-    devils-advocate (7)
+    ▶ Devil's Advocate (7)
             ↓
-    the-cio (8)
+    ▶ The CIO (8)
             ↓
-    portfolio-manager (9)
+    ▶ Portfolio Manager (9)
 ```
+
+For Mode A, announce each agent before and after exactly as described in the
+"announce every step" section. For the parallel batch (stages 2–4), announce
+all three before starting, then confirm all three when done:
+> `▶ Macro Strategist + Data Hunter + Sentiment Analyst — running in parallel`
+> `✓ Macro Strategist — <key finding> | ✓ Data Hunter — MoS = X% | ✓ Sentiment Analyst — <key finding>`
 
 Stages 2–5 are independent: delegate them in parallel after stage 1 completes.
 Stages 6–9 are sequential — each consumes all prior outputs.
