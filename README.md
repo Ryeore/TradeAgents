@@ -170,6 +170,26 @@ to the matching pipeline and reuses the same `crew/` logic:
 | `portfolio` (`deep=false`) | screen → budget allocation | `budget`, `preset`, `top` |
 | `portfolio` (`deep=true`) | full desk per name → conviction allocation | `budget`, `preset`, `top` |
 
+### Inputs (all 11 optional)
+
+AMP surfaces every [`DeskState`](src/analyst_desk/flow.py) field as an automation
+input. All 11 are **optional** — each has a sensible default, so you only set the
+ones your chosen `mode` needs (see the table above). Example placeholder values:
+
+| Input | Type | Default | Accepts / example | What it does |
+|-------|------|---------|-------------------|--------------|
+| `mode` | string | `"full"` | `full` \| `analysis` \| `quick` \| `screen` \| `portfolio` | Which pipeline to run. |
+| `ticker` | string | `""` | `"AAPL"`, `"CDR.WA"`, or a list `"AAPL MSFT NVDA"` | Single symbol to analyse; a space/comma list feeds `portfolio --deep`. WSE names need the `.WA` suffix. |
+| `account` | number | `null` | `50000` | Account value (portfolio currency) used by the Portfolio Manager to size the position. Required for `full`; without it, `full` degrades to `analysis`. |
+| `risk_pct` | number | `1.0` | `0.5`, `1`, `2` | Percent of the account risked per trade at the stop. |
+| `budget` | number | `null` | `2000` | Cash to deploy across names in `portfolio` mode. |
+| `preset` | string | `null` | `wse_blue` \| `us_mega` | Built-in watchlist to screen/allocate over (from `watchlists/`). |
+| `top` | integer | `0` | `6`, `8`, `10` | How many top-ranked names to keep from the screen (`0` = the mode's default). |
+| `deep` | boolean | `false` | `true` \| `false` | `portfolio` only: run the full desk per name and weight the budget by each CIO conviction instead of the screen score. |
+| `universe` | string | `null` | `"AAPL MSFT NVDA GOOGL"` | Explicit ticker universe to screen when you don't want a `preset`. |
+| `model` | string | `null` | `gpt-4o-mini`, `anthropic/claude-3-5-sonnet-latest`, `azure/<deployment>` | LiteLLM model id override (else falls back to `ANALYST_DESK_MODEL`). |
+| `result` | string | `""` | — | Output field — populated with the final report; leave unset on input. |
+
 Deployment artifacts: [`pyproject.toml`](pyproject.toml) (`[tool.crewai] type = "flow"`),
 the `src/analyst_desk/` package with a `kickoff()` entry point, and a committed
 `uv.lock`.
