@@ -1,0 +1,34 @@
+[project]
+name = "analyst-desk"
+version = "0.1.0"
+description = "9-analyst investment committee (Data Scout .. Portfolio Manager) as a deployable CrewAI Flow"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "crewai[tools]>=0.70",
+    "yfinance>=0.2.40",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+kickoff = "analyst_desk.main:kickoff"
+run_crew = "analyst_desk.main:kickoff"
+plot = "analyst_desk.main:plot"
+
+# CrewAI AMP reads this to build the deployment as a Flow automation.
+[tool.crewai]
+type = "flow"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Ship the deployable flow package plus the reused crew/ and lib/ packages.
+# scripts/, skills/ and watchlists/ are read at runtime relative to the repo
+# root (resolved from the working directory / ANALYST_DESK_ROOT).
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["analyst_desk*", "crew*", "lib*"]
+namespaces = false

@@ -35,7 +35,32 @@ except ImportError:  # pragma: no cover - allows importing without crewai instal
             raise NotImplementedError
 
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_MARKERS = ("scripts", "skills")
+
+
+def _find_repo_root() -> str:
+    """Locate the repo root (the dir containing scripts/ and skills/).
+
+    Works locally, under ``crewai run``, and on CrewAI AMP where the checkout is
+    the working directory. Order: env override -> walk up from CWD -> walk up
+    from this file -> parent of the crew/ package.
+    """
+    env = os.environ.get("ANALYST_DESK_ROOT")
+    if env and all(os.path.isdir(os.path.join(env, m)) for m in REPO_MARKERS):
+        return env
+    for base in (os.getcwd(), os.path.dirname(os.path.abspath(__file__))):
+        d = base
+        for _ in range(8):
+            if all(os.path.isdir(os.path.join(d, m)) for m in REPO_MARKERS):
+                return d
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+REPO_ROOT = _find_repo_root()
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "scripts")
 SKILLS_DIR = os.path.join(REPO_ROOT, "skills")
 REPORTS_DIR = os.path.join(REPO_ROOT, "agentReports")

@@ -145,6 +145,50 @@ It needs an LLM key (one desk per name); the plain `--portfolio` path does not.
 
 ---
 
+## Deploy to CrewAI AMP
+
+The desk is also packaged as a **CrewAI Flow** so it can be deployed as an
+automation on [CrewAI AMP](https://app.crewai.com). The Flow
+([`src/analyst_desk/flow.py`](src/analyst_desk/flow.py)) routes an input `mode`
+to the matching pipeline and reuses the same `crew/` logic:
+
+| `mode` | behaviour | key inputs |
+|--------|-----------|-----------|
+| `full` / `analysis` / `quick` | single-ticker desk | `ticker`, `account`, `risk_pct` |
+| `screen` | Opportunity Scout screen | `preset` / `ticker`, `top` |
+| `portfolio` (`deep=false`) | screen → budget allocation | `budget`, `preset`, `top` |
+| `portfolio` (`deep=true`) | full desk per name → conviction allocation | `budget`, `preset`, `top` |
+
+Deployment artifacts: [`pyproject.toml`](pyproject.toml) (`[tool.crewai] type = "flow"`),
+the `src/analyst_desk/` package with a `kickoff()` entry point, and a committed
+`uv.lock`.
+
+```powershell
+# one-time: authenticate, then deploy from this repo (pushed to GitHub)
+pip install "crewai[tools]"
+crewai login
+crewai deploy create        # detects the GitHub repo + .env vars, builds the Flow
+crewai deploy status        # watch the build; first deploy ~1 min
+```
+
+You can also deploy from the web UI: **Connect GitHub** at app.crewai.com, pick
+this repo, set env vars (`OPENAI_API_KEY` / `ANALYST_DESK_MODEL`), and Deploy.
+AMP exposes `/inputs`, `/kickoff` and `/status/{id}`; kick off with e.g.
+`{ "mode": "portfolio", "deep": true, "budget": 2000, "preset": "wse_blue", "top": 6 }`.
+
+> **Note:** the data tools call `yfinance` (Yahoo). On cloud IPs Yahoo may
+> rate-limit or intermittently 404 some tickers (especially thin WSE names), so
+> deployed runs can be flakier than local ones.
+
+Run the Flow locally too:
+
+```powershell
+$env:DESK_INPUTS = '{"mode":"quick","ticker":"AAPL"}'
+python -m analyst_desk.main        # or: crewai run   (with src on the path)
+```
+
+---
+
 ## The 5-dimension scorecard
 
 The CIO scores each stock 1–10 on **Valuation, Quality, Technical, Sentiment,
@@ -193,6 +237,8 @@ TradeAgents/
 ├─ scripts/                 # deterministic data + math tools (JSON out)
 ├─ skills/                  # the 10 analysts + analyst-desk orchestrator
 ├─ crew/                    # CrewAI layer: tools (script wrappers) + desk + CLI
+├─ src/analyst_desk/        # deployable CrewAI Flow (for CrewAI AMP)
+├─ pyproject.toml           # CrewAI Flow project + deps (uv.lock committed)
 ├─ watchlists/              # ticker lists for screen_candidates.py
 ├─ agentReports/            # auto-generated per-seat reports (gitignored)
 └─ output/                  # auto-generated reports (gitignored)
