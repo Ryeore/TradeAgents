@@ -345,6 +345,8 @@ def build_desk(
     # --- select task specs for the flow --------------------------------- #
     if flow == "quick":
         specs = [_analyst_tasks(ticker)[0]]
+    elif flow == "conviction":
+        specs = _analyst_tasks(ticker)  # analysts 1-8, ends at the CIO (no editor/PM)
     elif flow == "screen":
         specs = [_screen_task(universe or "preset us_mega")]
     elif flow == "portfolio":
@@ -404,6 +406,8 @@ def describe_pipeline(ticker: str = "TICKER", flow: str = "full",
     """Render the agent/task pipeline as text without instantiating crewai."""
     if flow == "quick":
         specs = [_analyst_tasks(ticker)[0]]
+    elif flow == "conviction":
+        specs = _analyst_tasks(ticker)
     elif flow == "screen":
         specs = [_screen_task(universe or "preset us_mega")]
     elif flow == "portfolio":

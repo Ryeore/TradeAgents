@@ -130,6 +130,19 @@ leftover cash is **swept** into the highest-scored affordable names so the budge
 is actually deployed. Pass `--holdings-file` (a `[{symbol, value}]` JSON) to see
 the *combined* portfolio weights after the new money lands.
 
+**By conviction, not just the screen (`--deep`):** the screen score is a coarse
+value/quality/momentum filter. To weight the budget by the full committee's
+verdict instead, run the desk on every shortlisted name and allocate by each
+CIO **conviction** (1–10):
+
+```powershell
+python -m crew.main --portfolio --deep --budget 2000 --preset wse_blue --top 6
+```
+
+This runs the analysts-1→8 (`conviction`) pipeline per name, parses each CIO
+conviction, and allocates by it — writing `agentReports/PORTFOLIO/deep-allocation.md`.
+It needs an LLM key (one desk per name); the plain `--portfolio` path does not.
+
 ---
 
 ## The 5-dimension scorecard

@@ -10,6 +10,8 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sys
 
 try:
@@ -47,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--portfolio", action="store_true",
                       help="Screen a universe then split --budget across the best names")
 
+    p.add_argument("--deep", action="store_true",
+                   help="With --portfolio: run the full desk per name and weight by CIO conviction")
     p.add_argument("--preset", help="Screener preset: wse_blue or us_mega (with --screen/--portfolio)")
     p.add_argument("--top", type=int, default=0, help="Screener: keep top N (with --screen/--portfolio)")
     p.add_argument("--quiet", action="store_true", help="Reduce agent step logging")
@@ -105,6 +109,23 @@ def main(argv=None) -> int:
         return 0
 
     from .desk import build_desk
+
+    if flow == "portfolio" and args.deep:
+        from .portfolio import run_portfolio_deep
+
+        tickers = None
+        if not args.preset and args.ticker:
+            tickers = [t for t in re.split(r"[,\s]+", args.ticker) if t]
+        alloc = run_portfolio_deep(
+            budget=args.budget, tickers=tickers, preset=args.preset,
+            top=args.top or 6, account=args.account, risk_pct=args.risk,
+            model=args.model, verbose=not args.quiet,
+        )
+        print("\n" + "=" * 70)
+        print("Deep portfolio allocation (by CIO conviction)")
+        print("=" * 70)
+        print(json.dumps(alloc, indent=2, default=str))
+        return 0
 
     if flow in ("screen", "portfolio"):
         desk = build_desk(
