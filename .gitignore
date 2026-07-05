@@ -12,6 +12,7 @@ output/
 *.json.cache
 .cache/
 agentsReporting/
+agentReports/
 
 # Env
 .env

@@ -86,6 +86,30 @@ chat mode (ask and I'll generate them).
 Run the scripts yourself and read the JSON; each script's docstring documents
 its arguments.
 
+### Option D — CrewAI (automated pipeline)
+The `crew/` package wires the same nine analysts into a **CrewAI** crew. Each
+analyst is a CrewAI `Agent` whose persona is loaded live from its
+`skills/*/*.md` file, and every deterministic script is exposed as a CrewAI
+tool — so the markdown stays the single source of truth for personas and the
+scripts stay the single source of truth for the math.
+
+```powershell
+pip install -r requirements.txt          # brings in crewai + python-dotenv
+copy .env.example .env                    # set ANALYST_DESK_MODEL + your API key
+
+python -m crew.main AAPL --account 50000 --risk 1   # full desk + trade plan
+python -m crew.main CDR.WA --analysis               # analysts 1–8 + report, no sizing
+python -m crew.main NVDA --quick                    # Data Scout snapshot only
+python -m crew.main --screen --preset wse_blue --top 8   # Opportunity Scout
+python -m crew.main AAPL --plan                     # print the pipeline, no API key
+```
+
+The crew runs the seats **sequentially** with each downstream task receiving the
+upstream reports as `context`, and writes one markdown file per seat to
+`agentReports/<TICKER>/` (`01-data-scout.md` … `09-portfolio-manager.md`,
+`99-final-report.md`). Set the model via `ANALYST_DESK_MODEL` (any LiteLLM id,
+e.g. `gpt-4o-mini`, `anthropic/claude-3-5-sonnet-latest`, `azure/<deployment>`).
+
 ---
 
 ## The 5-dimension scorecard
@@ -135,6 +159,8 @@ TradeAgents/
 ├─ lib/common.py            # yfinance wrappers + indicators (RSI, MFI, ATR, Fib)
 ├─ scripts/                 # deterministic data + math tools (JSON out)
 ├─ skills/                  # the 10 analysts + analyst-desk orchestrator
+├─ crew/                    # CrewAI layer: tools (script wrappers) + desk + CLI
 ├─ watchlists/              # ticker lists for screen_candidates.py
+├─ agentReports/            # auto-generated per-seat reports (gitignored)
 └─ output/                  # auto-generated reports (gitignored)
 ```
