@@ -1,15 +1,43 @@
 # 📊 Stock Skills — A 9-Analyst Investment Committee
 
-A set of **Claude Agent Skills** backed by small **Python (yfinance)** scripts that
-run a full bottom-up + top-down workup on any stock and turn it into a concrete,
-risk-managed trade plan.
+Run a full bottom-up + top-down workup on any stock — from idea screening to a
+sized, risk-managed trade plan — driven by a 9-analyst committee.
 
-Each "analyst" is a skill in [`skills/`](skills/). Skills do the *reasoning* and
-live web search; the scripts in [`scripts/`](scripts/) do the deterministic *math*
-(indicators, fundamentals, scorecard, position sizing). No API keys required.
+Three ways to run it, all sharing the same engine:
 
-> ⚠️ **Not financial advice.** This is an educational research and risk-management
+- **CrewAI** (`crew/`) — automated multi-agent pipeline. **← this README focuses here.**
+- **Agent Skills** (`skills/`) — markdown playbooks for Claude / Copilot.
+- **Scripts** (`scripts/`) — deterministic Python math tools you can call directly (no API key).
+
+> ⚠️ **Not financial advice.** An educational research and risk-management
 > framework. You are responsible for your own decisions.
+
+---
+
+## 🚀 Quickstart
+
+```powershell
+# 1. Install  (Python 3.10–3.13)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 2. Configure the LLM key  (only needed for the CrewAI agents)
+copy .env.example .env
+#    then edit .env: set ANALYST_DESK_MODEL and your OPENAI_API_KEY (or another provider)
+
+# 3. Run
+python -m crew.main AAPL --account 50000 --risk 1     # full desk + trade plan on AAPL
+python -m crew.main --portfolio --budget 2000 --preset wse_blue --top 8   # allocate a budget
+python -m crew.main AAPL --plan                        # preview the pipeline (no API key)
+```
+
+No API key yet? The deterministic parts still work on their own:
+
+```powershell
+python scripts/fetch_quote.py AAPL                                # live quote JSON
+python scripts/screen_candidates.py --preset wse_blue --top 8     # rank a watchlist
+```
 
 ---
 
@@ -40,16 +68,9 @@ Chartist ───┘                                    scorecard)     stop, ta
 
 ---
 
-## Setup
+## Smoke-test the scripts
 
-```powershell
-cd C:\Users\kamil\Desktop\Projects\TradeAgents
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-Smoke-test the scripts (all print JSON):
+Every script prints JSON and needs **no API key**:
 
 ```powershell
 python scripts/fetch_quote.py AAPL
@@ -63,55 +84,45 @@ python scripts/position_sizer.py --price 100 --atr 3.2 --conviction 7 --account 
 
 ---
 
-## How to run the analysis
+## How to run
 
-### Option A — Claude / Claude Code (Agent Skills)
-Point your agent at this folder so it can discover the `skills/`. Then ask, e.g.:
+### CrewAI (recommended — automated pipeline)
 
-> *"Run the analyst desk on NVDA. Account is $50k, 1% risk per trade."*
+The `crew/` package runs the nine analysts as a **CrewAI** crew. Each analyst is
+an `Agent` whose persona is loaded live from its `skills/*/*.md` file, and every
+deterministic script is exposed as a CrewAI tool — so the markdown stays the
+single source of truth for personas and the scripts for the math.
 
-The `analyst-desk` skill orchestrates the other eight in order and returns one
-decision-ready report. You can also call a single seat: *"Just give me the
-Chartist read on AMD."*
+Run `python -m crew.main <TICKER> [options]`:
 
-### Option B — GitHub Copilot / VS Code
-The skills are plain markdown playbooks and the scripts are plain Python, so you
-can drive them from Copilot Chat too: ask Copilot to run a script (e.g.
-`python scripts/fetch_technicals.py NVDA`) and then follow the matching
-`skills/<name>/SKILL.md` instructions to interpret the JSON. To expose these as
-native Copilot agents, wrap each `SKILL.md` as a `.agent.md` / `.prompt.md`
-chat mode (ask and I'll generate them).
+| Command | What it does | API key? |
+|---------|--------------|:---:|
+| `python -m crew.main AAPL --account 50000 --risk 1` | Full 9-analyst desk **+ sized trade plan** | yes |
+| `python -m crew.main AAPL --analysis` | Analysts 1–8 + report, no position sizing | yes |
+| `python -m crew.main AAPL --quick` | Data Scout snapshot only | yes |
+| `python -m crew.main --screen --preset wse_blue --top 8` | Rank a watchlist (Opportunity Scout) | yes |
+| `python -m crew.main --portfolio --budget 2000 --preset wse_blue --top 8` | Split a budget across the best names | yes |
+| `python -m crew.main --portfolio --deep --budget 2000 --preset wse_blue --top 6` | …weighted by full-desk CIO conviction | yes |
+| `python -m crew.main AAPL --plan` | Print the pipeline plan and exit | **no** |
 
-### Option C — Manual
-Run the scripts yourself and read the JSON; each script's docstring documents
-its arguments.
+- **Tickers:** WSE names need the `.WA` suffix (e.g. `CDR.WA`, `KRU.WA`).
+- **Model:** set `ANALYST_DESK_MODEL` in `.env` — any LiteLLM id
+  (`gpt-4o-mini`, `anthropic/claude-3-5-sonnet-latest`, `azure/<deployment>`, …).
+- **Output:** seats run sequentially (each receives the upstream reports as
+  `context`) and each writes one markdown file to `agentReports/<TICKER>/` —
+  `01-data-scout.md` … `09-portfolio-manager.md`, `99-final-report.md`.
 
-### Option D — CrewAI (automated pipeline)
-The `crew/` package wires the same nine analysts into a **CrewAI** crew. Each
-analyst is a CrewAI `Agent` whose persona is loaded live from its
-`skills/*/*.md` file, and every deterministic script is exposed as a CrewAI
-tool — so the markdown stays the single source of truth for personas and the
-scripts stay the single source of truth for the math.
+### Other ways to run
 
-```powershell
-pip install -r requirements.txt          # brings in crewai + python-dotenv
-copy .env.example .env                    # set ANALYST_DESK_MODEL + your API key
+- **Scripts only (no API key):** run any `scripts/*.py` and read the JSON —
+  e.g. `python scripts/fetch_quote.py AAPL`. Each script's docstring lists its args.
+- **Claude / Claude Code:** point the agent at this folder so it discovers
+  `skills/`, then ask *"Run the analyst desk on NVDA, $50k account, 1% risk."* The
+  `analyst-desk` skill orchestrates the other eight and returns one report.
+- **GitHub Copilot / VS Code:** the skills are markdown playbooks — ask Copilot to
+  run a script and follow the matching `skills/<name>/*.md` to interpret the JSON.
 
-python -m crew.main AAPL --account 50000 --risk 1   # full desk + trade plan
-python -m crew.main CDR.WA --analysis               # analysts 1–8 + report, no sizing
-python -m crew.main NVDA --quick                    # Data Scout snapshot only
-python -m crew.main --screen --preset wse_blue --top 8   # Opportunity Scout
-python -m crew.main --portfolio --budget 2000 --preset wse_blue --top 8   # allocate a budget
-python -m crew.main AAPL --plan                     # print the pipeline, no API key
-```
-
-The crew runs the seats **sequentially** with each downstream task receiving the
-upstream reports as `context`, and writes one markdown file per seat to
-`agentReports/<TICKER>/` (`01-data-scout.md` … `09-portfolio-manager.md`,
-`99-final-report.md`). Set the model via `ANALYST_DESK_MODEL` (any LiteLLM id,
-e.g. `gpt-4o-mini`, `anthropic/claude-3-5-sonnet-latest`, `azure/<deployment>`).
-
-### Deploying a fixed budget across names (portfolio allocation)
+### Portfolio allocation — details
 
 The `--portfolio` flow answers *“I have 2000 PLN — which stocks and what %?”*: the
 Opportunity Scout screens the universe, then the Portfolio Manager splits the
