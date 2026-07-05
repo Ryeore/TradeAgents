@@ -121,6 +121,16 @@ class PositionSizerInput(BaseModel):
     tranches: int = Field(3, description="Number of DCA buys")
 
 
+class AllocatorInput(BaseModel):
+    budget: float = Field(..., description="Cash budget to deploy across names")
+    candidates: list = Field(
+        ..., description="List of {symbol, price, score} dicts (score = screen score or conviction)")
+    max_weight: float = Field(0.35, description="Max weight per name (0-1)")
+    top: int = Field(0, description="Keep only the top N candidates (0 = all)")
+    score_power: float = Field(1.5, description="Concentration: higher tilts more to top names")
+    reserve_pct: float = Field(0.0, description="Fraction of budget to keep as cash (0-1)")
+
+
 # --------------------------------------------------------------------------- #
 # Tools
 # --------------------------------------------------------------------------- #
@@ -253,12 +263,44 @@ class PositionSizerTool(BaseTool):
         )
 
 
+class PortfolioAllocatorTool(BaseTool):
+    name: str = "portfolio_allocator"
+    description: str = (
+        "Split a cash budget across ranked candidates. Provide budget and a list of "
+        "{symbol, price, score} dicts (score = screen score or CIO conviction). Returns a "
+        "buy plan: target weight, whole-share count, cost and actual weight per name, plus "
+        "leftover cash. Weights scale with score and are capped per name; leftover is swept "
+        "into the top affordable names. Returns JSON."
+    )
+    args_schema: Type[BaseModel] = AllocatorInput
+
+    def _run(self, budget, candidates, max_weight=0.35, top=0, score_power=1.5,
+             reserve_pct=0.0) -> str:
+        import tempfile
+
+        fd, path = tempfile.mkstemp(suffix=".json", prefix="candidates_")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(candidates, fh)
+            args = ["--budget", budget, "--candidates-file", path,
+                    "--max-weight", max_weight, "--score-power", score_power,
+                    "--reserve-pct", reserve_pct]
+            if top:
+                args += ["--top", top]
+            return run_script("portfolio_allocator.py", args)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 # Registry so the desk can pick tools by name.
 def build_tools() -> dict[str, BaseTool]:
     """Instantiate one of each tool, keyed by tool name."""
     instances = [
         FetchQuoteTool(), FetchFundamentalsTool(), FetchTechnicalsTool(),
         FetchSentimentTool(), FetchMacroTool(), ScreenCandidatesTool(),
-        ScorecardTool(), PositionSizerTool(),
+        ScorecardTool(), PositionSizerTool(), PortfolioAllocatorTool(),
     ]
     return {t.name: t for t in instances}

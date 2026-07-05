@@ -101,6 +101,7 @@ python -m crew.main AAPL --account 50000 --risk 1   # full desk + trade plan
 python -m crew.main CDR.WA --analysis               # analysts 1–8 + report, no sizing
 python -m crew.main NVDA --quick                    # Data Scout snapshot only
 python -m crew.main --screen --preset wse_blue --top 8   # Opportunity Scout
+python -m crew.main --portfolio --budget 2000 --preset wse_blue --top 8   # allocate a budget
 python -m crew.main AAPL --plan                     # print the pipeline, no API key
 ```
 
@@ -109,6 +110,25 @@ upstream reports as `context`, and writes one markdown file per seat to
 `agentReports/<TICKER>/` (`01-data-scout.md` … `09-portfolio-manager.md`,
 `99-final-report.md`). Set the model via `ANALYST_DESK_MODEL` (any LiteLLM id,
 e.g. `gpt-4o-mini`, `anthropic/claude-3-5-sonnet-latest`, `azure/<deployment>`).
+
+### Deploying a fixed budget across names (portfolio allocation)
+
+The `--portfolio` flow answers *“I have 2000 PLN — which stocks and what %?”*: the
+Opportunity Scout screens the universe, then the Portfolio Manager splits the
+budget across the best-scored names. The math lives in
+[`scripts/portfolio_allocator.py`](scripts/portfolio_allocator.py) and runs
+standalone with **no LLM/API key**:
+
+```powershell
+python scripts/screen_candidates.py --preset wse_blue --top 8 > screen.json
+python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen.json --top 6
+```
+
+Weights scale with each name's score (`score ** score_power`), are **capped per
+name** (`--max-weight`, default 35%), converted to **whole shares**, and any
+leftover cash is **swept** into the highest-scored affordable names so the budget
+is actually deployed. Pass `--holdings-file` (a `[{symbol, value}]` JSON) to see
+the *combined* portfolio weights after the new money lands.
 
 ---
 

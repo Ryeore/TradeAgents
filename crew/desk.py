@@ -113,8 +113,9 @@ AGENT_SPECS: dict[str, AgentSpec] = {
     "portfolio_manager": AgentSpec(
         "portfolio_manager", "Portfolio Manager",
         "Turn the CIO conviction + Chartist price/ATR into a concrete, risk-managed trade plan: "
-        "size, DCA tranches, ATR stop, and two targets. Capital preservation first.",
-        ["position_sizer"],
+        "size, DCA tranches, ATR stop, and two targets. For a multi-name budget, split the cash "
+        "across the best-scored names by weight. Capital preservation first.",
+        ["position_sizer", "portfolio_allocator"],
     ),
     "desk_editor": AgentSpec(
         "desk_editor", "Desk Editor (Chief of Staff)",
@@ -246,6 +247,33 @@ def _final_task(ticker: str, sized: bool) -> TaskSpec:
     )
 
 
+def _screen_task(universe_hint: str) -> TaskSpec:
+    return TaskSpec(
+        "opportunity_scout", "opportunity_scout", "00-opportunity-scout.md",
+        "A ranked shortlist table (symbol, name, screen score, sub-scores, driving signals) AND, "
+        "at the end, a fenced ```json code block containing an array of {\"symbol\",\"price\","
+        "\"score\"} objects (score = screen_score) so the Portfolio Manager can allocate.",
+        f"You are the Opportunity Scout. Use the screen_candidates tool to rank this universe: "
+        f"{universe_hint}. A high score is a reason to investigate, not a buy signal. Then emit "
+        f"the machine-readable candidates JSON block (symbol, price, score) for the allocator.",
+    )
+
+
+def _allocate_task(budget: float, holdings_note: str = "") -> TaskSpec:
+    return TaskSpec(
+        "allocate", "portfolio_manager", "10-portfolio-allocation.md",
+        "A markdown allocation plan: an intro line stating the budget; a table of symbol, target "
+        "weight %, shares, cost, and actual weight %; total deployed and leftover cash; a one-line "
+        "rationale per top name tying weight to its score; 2-3 portfolio risks; and the "
+        "'risk framework, not financial advice' disclaimer.",
+        f"You are the Portfolio Manager. You have a budget of {budget} to deploy across the best "
+        f"names. Take the candidates JSON from the Opportunity Scout report and call the "
+        f"portfolio_allocator tool with budget={budget}. Present the buy plan, weighting each name "
+        f"by its score and respecting the per-name cap.{holdings_note}",
+        ["opportunity_scout"],
+    )
+
+
 # --------------------------------------------------------------------------- #
 # LLM
 # --------------------------------------------------------------------------- #
@@ -284,11 +312,14 @@ def build_desk(
     model: Optional[str] = None,
     flow: str = "full",
     verbose: bool = True,
+    budget: Optional[float] = None,
+    universe: Optional[str] = None,
 ) -> Desk:
     """Assemble the CrewAI crew for the requested flow.
 
     flow: 'full' (1-9 + report, needs account), 'analysis' (1-8 + report),
-    'quick' (Data Scout only), 'screen' (Opportunity Scout only).
+    'quick' (Data Scout only), 'screen' (Opportunity Scout only),
+    'portfolio' (Opportunity Scout screen -> budget allocation across names).
     """
     from crewai import Agent, Crew, Process, Task
 
@@ -315,14 +346,9 @@ def build_desk(
     if flow == "quick":
         specs = [_analyst_tasks(ticker)[0]]
     elif flow == "screen":
-        specs = [TaskSpec(
-            "opportunity_scout", "opportunity_scout", "00-opportunity-scout.md",
-            "A ranked shortlist table (symbol, name, screen score, the 3 sub-scores, driving "
-            "signals), a top 3-5 to investigate with one line each, and a hand-off to the desk.",
-            "You are the Opportunity Scout. Use the screen_candidates tool to rank the requested "
-            "universe and shortlist the best-balanced candidates. A high score is a reason to "
-            "investigate, not a buy signal.",
-        )]
+        specs = [_screen_task(universe or "preset us_mega")]
+    elif flow == "portfolio":
+        specs = [_screen_task(universe or "preset us_mega"), _allocate_task(budget or 0)]
     else:
         sized = flow == "full" and account is not None
         specs = _analyst_tasks(ticker)
@@ -358,7 +384,8 @@ def build_desk(
     return Desk(
         crew=crew, ticker=ticker, flow=flow, tasks=ordered_tasks,
         reports_dir=reports_dir,
-        inputs={"ticker": ticker, "account": account, "risk_pct": risk_pct},
+        inputs={"ticker": ticker, "account": account, "risk_pct": risk_pct,
+                "budget": budget, "universe": universe},
     )
 
 
@@ -372,13 +399,15 @@ def run_desk(**kwargs):
 # Plan (no crewai / no LLM required) -- for --plan dry runs
 # --------------------------------------------------------------------------- #
 def describe_pipeline(ticker: str = "TICKER", flow: str = "full",
-                      account: Optional[float] = None, risk_pct: float = 1.0) -> str:
+                      account: Optional[float] = None, risk_pct: float = 1.0,
+                      budget: Optional[float] = None, universe: Optional[str] = None) -> str:
     """Render the agent/task pipeline as text without instantiating crewai."""
     if flow == "quick":
         specs = [_analyst_tasks(ticker)[0]]
     elif flow == "screen":
-        specs = [TaskSpec("opportunity_scout", "opportunity_scout", "00-opportunity-scout.md",
-                          "ranked shortlist", "screen the universe")]
+        specs = [_screen_task(universe or "preset us_mega")]
+    elif flow == "portfolio":
+        specs = [_screen_task(universe or "preset us_mega"), _allocate_task(budget or 0)]
     else:
         sized = flow == "full" and account is not None
         specs = _analyst_tasks(ticker)

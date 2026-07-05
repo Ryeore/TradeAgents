@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Account value; enables the Portfolio Manager sizing stage")
     p.add_argument("--risk", type=float, default=1.0,
                    help="Risk per trade as %% of account (default 1.0)")
+    p.add_argument("--budget", type=float, default=None,
+                   help="Cash budget to deploy across names (with --portfolio)")
+    p.add_argument("--universe", default=None,
+                   help="Screen universe hint, e.g. 'preset wse_blue' or 'tickers KRU.WA CDR.WA'")
     p.add_argument("--model", default=None,
                    help="LLM model id (default env ANALYST_DESK_MODEL or gpt-4o-mini)")
 
@@ -40,9 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Run the Data Scout snapshot only")
     mode.add_argument("--screen", action="store_true",
                       help="Run the Opportunity Scout screener only")
+    mode.add_argument("--portfolio", action="store_true",
+                      help="Screen a universe then split --budget across the best names")
 
-    p.add_argument("--preset", help="Screener preset: wse_blue or us_mega (with --screen)")
-    p.add_argument("--top", type=int, default=0, help="Screener: keep top N (with --screen)")
+    p.add_argument("--preset", help="Screener preset: wse_blue or us_mega (with --screen/--portfolio)")
+    p.add_argument("--top", type=int, default=0, help="Screener: keep top N (with --screen/--portfolio)")
     p.add_argument("--quiet", action="store_true", help="Reduce agent step logging")
     p.add_argument("--plan", action="store_true",
                    help="Print the pipeline plan and exit (no LLM/API key required)")
@@ -50,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_flow(args) -> str:
+    if args.portfolio:
+        return "portfolio"
     if args.screen:
         return "screen"
     if args.quick:
@@ -59,12 +67,28 @@ def resolve_flow(args) -> str:
     return "full"
 
 
+def universe_hint(args) -> str:
+    parts = []
+    if args.preset:
+        parts.append(f"preset {args.preset}")
+    elif args.ticker:
+        parts.append(f"tickers {args.ticker}")
+    else:
+        parts.append("preset us_mega")
+    if args.top:
+        parts.append(f"top {args.top}")
+    return ", ".join(parts)
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     flow = resolve_flow(args)
 
-    if flow != "screen" and not args.ticker:
-        print("error: a ticker is required (or use --screen).", file=sys.stderr)
+    if flow not in ("screen", "portfolio") and not args.ticker:
+        print("error: a ticker is required (or use --screen / --portfolio).", file=sys.stderr)
+        return 2
+    if flow == "portfolio" and not args.budget:
+        print("error: --portfolio requires --budget (e.g. --budget 2000).", file=sys.stderr)
         return 2
     if flow == "full" and args.account is None:
         # No account -> fall back to analysis-only (can't size a position).
@@ -76,23 +100,17 @@ def main(argv=None) -> int:
         print(describe_pipeline(
             ticker=(args.ticker or "TICKER").upper(), flow=flow,
             account=args.account, risk_pct=args.risk,
+            budget=args.budget, universe=universe_hint(args),
         ))
         return 0
 
     from .desk import build_desk
 
-    if flow == "screen":
-        # Screener flow: pass universe selection through the task description.
-        desk = build_desk(ticker=args.ticker or "SCREEN", model=args.model,
-                          flow="screen", verbose=not args.quiet)
-        hint = []
-        if args.preset:
-            hint.append(f"preset={args.preset}")
-        if args.top:
-            hint.append(f"top={args.top}")
-        if args.ticker:
-            hint.append(f"tickers={args.ticker}")
-        desk.inputs["screen_hint"] = ", ".join(hint) or "preset=us_mega"
+    if flow in ("screen", "portfolio"):
+        desk = build_desk(
+            ticker=args.ticker or "PORTFOLIO", model=args.model, flow=flow,
+            budget=args.budget, universe=universe_hint(args), verbose=not args.quiet,
+        )
         result = desk.crew.kickoff(inputs=desk.inputs)
     else:
         desk = build_desk(
