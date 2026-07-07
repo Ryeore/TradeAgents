@@ -20,10 +20,17 @@ from lib.common import (  # noqa: E402
 
 PRESETS = {
     "wse_blue": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
-                 "MBR.WA", "SNT.WA", "PKN.WA", "PEO.WA", "DNP.WA", "ALE.WA",
-                 "CDR.WA", "LPP.WA", "KGH.WA", "PZU.WA", "SPL.WA", "OPL.WA"],
-    "us_mega": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "TSLA"],
+                 "MBR.WA", "SNT.WA","ASB.WA"],
+    "us_mega": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "TSLA", "MU"],
 }
+
+
+# TEMP_PRESETS = {
+#     "wse_blue": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
+#                  "MBR.WA", "SNT.WA", "PKN.WA", "PEO.WA", "DNP.WA", "ALE.WA",
+#                  "CDR.WA", "LPP.WA", "KGH.WA", "PZU.WA", "EBP.WA", "OPL.WA"],
+#     "us_mega": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "TSLA"],
+# }
 
 
 def clamp(x, lo=0.0, hi=100.0):

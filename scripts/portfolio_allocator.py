@@ -28,6 +28,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.common import emit, round_or_none  # noqa: E402
 
 
+def read_json_file(path: str):
+    """Read JSON from files encoded as UTF-8/UTF-16 with or without BOM."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+
+    # Prefer explicit BOM detection when present.
+    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+        return json.loads(data.decode("utf-16"))
+    if data.startswith(b"\xef\xbb\xbf"):
+        return json.loads(data.decode("utf-8-sig"))
+
+    # Fallback chain for BOM-less files.
+    for enc in ("utf-8", "utf-16"):
+        try:
+            return json.loads(data.decode(enc))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+    raise ValueError(f"Unsupported JSON encoding or invalid JSON: {path}")
+
+
 def load_candidates(obj) -> list[dict]:
     """Accept either a bare candidate list or a screen_candidates.py payload."""
     rows = obj.get("ranked", obj) if isinstance(obj, dict) else obj
@@ -202,16 +222,14 @@ def main() -> None:
     args = p.parse_args()
 
     if args.candidates_file:
-        with open(args.candidates_file, "r", encoding="utf-8-sig") as fh:
-            obj = json.load(fh)
+        obj = read_json_file(args.candidates_file)
     else:
         obj = json.loads(args.candidates_json)
     candidates = load_candidates(obj)
 
     holdings = None
     if args.holdings_file:
-        with open(args.holdings_file, "r", encoding="utf-8-sig") as fh:
-            holdings = json.load(fh)
+        holdings = read_json_file(args.holdings_file)
 
     emit(allocate(
         args.budget, candidates, max_weight=args.max_weight, min_score=args.min_score,
