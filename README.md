@@ -135,6 +135,51 @@ python scripts/screen_candidates.py --preset wse_blue --top 8 > screen.json
 python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen.json --top 6
 ```
 
+Typical sample workflows:
+
+```powershell
+# Screen US mega-caps into a JSON file
+python scripts/screen_candidates.py --preset us_mega --top 10 > screen.json
+
+# Allocate a smaller budget across the top-ranked names from that file
+python scripts/portfolio_allocator.py --budget 700 --candidates-file screen.json --top 10
+```
+
+The first command writes the screener output to `screen.json`. The second reads
+that file and converts the ranked candidates into a concrete buy plan using the
+requested cash budget and top-N cutoff.
+
+How to read the screener output (`screen.json`):
+
+- Top-level metadata: `universe_size`, `method`, `next_step`, `disclaimer`.
+- Main payload: `ranked` is the ordered candidate list, best first.
+- Per stock: `symbol`, `price`, `screen_score`, `value_score`, `quality_score`,
+  `momentum_score`.
+- Detailed inputs: `signals` contains the raw drivers such as analyst upside,
+  forward P/E, P/B, dividend yield, ROE, revenue growth, 6-month return, RSI,
+  and whether price is above the 50/200-day averages.
+
+In practice, read `ranked[0]`, `ranked[1]`, and so on as your shortlist. The
+most important field is `screen_score`: higher means a stronger blended
+value/quality/momentum candidate for deeper analysis, not an automatic buy.
+
+How to read the portfolio allocation output:
+
+- `budget`: the total cash you asked the allocator to deploy.
+- `params`: the rules used for the run, such as `max_weight_pct`, `top`, and
+  `score_power`.
+- `allocations`: the actual buy plan, one row per selected stock.
+- Per allocation row: `symbol`, `price`, `score`, `target_weight_pct`,
+  `shares`, `cost`, and `actual_weight_pct`.
+- `summary`: total `deployed`, `leftover_cash`, `cash_pct`, number of
+  positions, and any names dropped because they were too expensive to buy even
+  one share.
+
+Start with `allocations` if you want the actionable result. `target_weight_pct`
+shows the model's ideal weighting before whole-share rounding, while
+`actual_weight_pct` shows what was really achieved after converting the budget
+into buyable share counts.
+
 Weights scale with each name's score (`score ** score_power`), are **capped per
 name** (`--max-weight`, default 35%), converted to **whole shares**, and any
 leftover cash is **swept** into the highest-scored affordable names so the budget
