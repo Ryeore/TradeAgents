@@ -163,17 +163,97 @@ In practice, read `ranked[0]`, `ranked[1]`, and so on as your shortlist. The
 most important field is `screen_score`: higher means a stronger blended
 value/quality/momentum candidate for deeper analysis, not an automatic buy.
 
+How `screen_score` is calculated:
+
+- Each raw signal is mapped to a 0-100 score using a clamped linear scale.
+- Value score = mean of:
+  - analyst upside (`-20%` to `40%`, higher is better)
+  - forward P/E (`40` to `5`, lower is better)
+  - price/book (`8` to `0.5`, lower is better)
+  - dividend yield (`0%` to `8%`, higher is better)
+- Quality score = mean of:
+  - ROE (`0%` to `30%`)
+  - revenue growth (`0%` to `40%`)
+- Momentum score = mean of:
+  - 6-month return (`-30%` to `40%`)
+  - RSI14 (`30` to `70`)
+  - price above MA50 (100 if true, else 0)
+  - price above MA200 (100 if true, else 0)
+- Final `screen_score` = mean(`value_score`, `quality_score`, `momentum_score`).
+- Missing signals are skipped (None-tolerant averaging), so a stock can still
+  receive a score when some fields are unavailable.
+
+How allocation uses that score:
+
+- The allocator does not recompute fundamentals/technicals.
+- It takes `score` from input, falling back to `screen_score` (or `conviction`
+  in deep mode), then computes raw weights as `score ** score_power`.
+- Those raw weights are normalized, capped by `--max-weight`, converted to
+  whole shares, and then adjusted by leftover-cash sweep.
+
 How to read the portfolio allocation output:
 
 - `budget`: the total cash you asked the allocator to deploy.
-- `params`: the rules used for the run, such as `max_weight_pct`, `top`, and
-  `score_power`.
+- `params`: the rules used for the run, including currency context.
+  - `budget_currency`: always `PLN` (the allocator treats `--budget` as PLN).
+  - `fx_usdpln`: USD→PLN rate used to convert US tickers before sizing.
+  - `max_weight_pct`, `min_score`, `top`, `score_power`, `cash_reserve_pct`,
+    `leftover_sweep`: allocation controls.
 - `allocations`: the actual buy plan, one row per selected stock.
-- Per allocation row: `symbol`, `price`, `score`, `target_weight_pct`,
-  `shares`, `cost`, and `actual_weight_pct`.
+- Per allocation row:
+  - `symbol`: ticker.
+  - `currency`: instrument currency (`PLN` or `USD`).
+  - `price`: native instrument price (e.g., USD for US stocks).
+  - `price_pln`: normalized PLN price used by the allocator math.
+  - `score`: ranking score used for weighting.
+  - `target_weight_pct`: model target before whole-share rounding.
+  - `shares`: integer shares to buy.
+  - `cost` / `cost_pln`: planned spend in PLN for that row.
+  - `actual_weight_pct`: realized portfolio weight after rounding.
 - `summary`: total `deployed`, `leftover_cash`, `cash_pct`, number of
   positions, and any names dropped because they were too expensive to buy even
   one share.
+
+Example interpretation of a sample row:
+
+```json
+{
+  "budget": 5000.0,
+  "params": {
+    "budget_currency": "PLN",
+    "fx_usdpln": 3.78345,
+    "max_weight_pct": 35.0,
+    "min_score": 0.0,
+    "top": 10,
+    "score_power": 1.5,
+    "cash_reserve_pct": 0.0,
+    "leftover_sweep": true
+  },
+  "allocations": [
+    {
+      "symbol": "XTB.WA",
+      "currency": "PLN",
+      "price": 123.08,
+      "price_pln": 123.08,
+      "score": 76.6,
+      "target_weight_pct": 12.42,
+      "shares": 14,
+      "cost": 1723.12,
+      "cost_pln": 1723.12,
+      "actual_weight_pct": 34.46
+    }
+  ]
+}
+```
+
+In this example, your total budget is `5000 PLN`. The model first computes
+target weights from scores (`score_power=1.5`), then applies the 35% cap and
+whole-share rounding. For `XTB.WA`, buying `14` shares at `123.08 PLN` spends
+`1723.12 PLN`, which is `34.46%` of the full budget.
+
+If a row were a US stock, `currency` would be `USD`, `price` would be in USD,
+and `price_pln` would equal `price * fx_usdpln`; sizing and `cost_pln` are
+always computed in PLN.
 
 Start with `allocations` if you want the actionable result. `target_weight_pct`
 shows the model's ideal weighting before whole-share rounding, while

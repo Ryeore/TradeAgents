@@ -25,7 +25,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.common import emit, round_or_none  # noqa: E402
+from lib.common import emit, get_ticker, last_price, round_or_none, safe_info  # noqa: E402
 
 
 def read_json_file(path: str):
@@ -59,10 +59,57 @@ def load_candidates(obj) -> list[dict]:
         out.append({
             "symbol": r.get("symbol"),
             "price": r.get("price"),
+            "currency": r.get("currency"),
             "score": score,
             "atr": r.get("atr"),
         })
     return out
+
+
+def normalize_currency(symbol: str | None, currency: str | None) -> str:
+    """Best-effort currency normalization for candidate rows."""
+    cur = (currency or "").strip().upper()
+    if cur:
+        return cur
+    sym = (symbol or "").strip().upper()
+    if sym.endswith(".WA"):
+        return "PLN"
+    return "USD"
+
+
+def fetch_usdpln_rate() -> float:
+    """Fetch USDPLN FX spot from yfinance."""
+    ticker = get_ticker("USDPLN=X")
+    info = safe_info(ticker)
+    rate = last_price(ticker, info)
+    if rate is None or rate <= 0:
+        raise ValueError("Could not fetch USDPLN rate. Pass --usdpln manually.")
+    return float(rate)
+
+
+def convert_candidates_to_pln(candidates: list[dict], usdpln: float) -> tuple[list[dict], list[dict]]:
+    """Return PLN-normalized candidates plus skipped rows with unsupported currency."""
+    out: list[dict] = []
+    skipped: list[dict] = []
+    for c in candidates:
+        cur = normalize_currency(c.get("symbol"), c.get("currency"))
+        price = c.get("price")
+        if price is None:
+            out.append({**c, "currency": cur, "price_pln": None})
+            continue
+        if cur == "PLN":
+            price_pln = float(price)
+        elif cur == "USD":
+            price_pln = float(price) * usdpln
+        else:
+            skipped.append({
+                "symbol": c.get("symbol"),
+                "currency": cur,
+                "reason": "unsupported currency (only PLN and USD are supported)",
+            })
+            continue
+        out.append({**c, "currency": cur, "price_pln": price_pln})
+    return out, skipped
 
 
 def apply_weight_cap(weights: dict[str, float], cap: float) -> dict[str, float]:
@@ -92,10 +139,15 @@ def apply_weight_cap(weights: dict[str, float], cap: float) -> dict[str, float]:
 def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
              min_score: float = 0.0, top: int = 0, score_power: float = 1.5,
              reserve_pct: float = 0.0, sweep: bool = True,
-             holdings: list[dict] | None = None) -> dict:
+             holdings: list[dict] | None = None,
+             usdpln: float | None = None) -> dict:
     """Distribute `budget` across candidates weighted by score**score_power."""
-    usable = [c for c in candidates
-              if c.get("price") and c.get("score") is not None and c["price"] > 0
+    if usdpln is None:
+        usdpln = fetch_usdpln_rate()
+
+    normalized, skipped = convert_candidates_to_pln(candidates, float(usdpln))
+    usable = [c for c in normalized
+              if c.get("price_pln") and c.get("score") is not None and c["price_pln"] > 0
               and c["score"] >= min_score]
     usable.sort(key=lambda c: c["score"], reverse=True)
     if top:
@@ -104,6 +156,8 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
     result = {
         "budget": round_or_none(budget),
         "params": {
+            "budget_currency": "PLN",
+            "fx_usdpln": round_or_none(usdpln, 6),
             "max_weight_pct": round(max_weight * 100, 1),
             "min_score": min_score,
             "top": top or None,
@@ -115,8 +169,11 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         "summary": {},
         "note": "Weights scale with score^score_power, capped per name. Shares are whole "
                 "units; leftover cash is swept into the highest-scored affordable names "
-                "(still under the per-name cap). Educational, not financial advice.",
+                "(still under the per-name cap). Budget is PLN; USD prices are converted "
+                "using fx_usdpln. Educational, not financial advice.",
     }
+    if skipped:
+        result["skipped_candidates"] = skipped
     if not usable:
         result["summary"] = {"error": "no usable candidates (need price and score)"}
         return result
@@ -131,9 +188,9 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
     cap_amount = max_weight * budget
 
     # --- initial whole-share allocation by target weight ----------------- #
-    shares = {sym: int((investable * w) // float(by_symbol[sym]["price"]))
+    shares = {sym: int((investable * w) // float(by_symbol[sym]["price_pln"]))
               for sym, w in weights.items()}
-    deployed = sum(shares[s] * float(by_symbol[s]["price"]) for s in shares)
+    deployed = sum(shares[s] * float(by_symbol[s]["price_pln"]) for s in shares)
 
     # --- greedy leftover sweep: fill best names first, respect the cap --- #
     if sweep:
@@ -141,7 +198,7 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         while True:
             best = None
             for c in ranked:
-                sym, price = c["symbol"], float(c["price"])
+                sym, price = c["symbol"], float(c["price_pln"])
                 cur = shares[sym] * price
                 if price <= investable - deployed + 1e-9 and cur + price <= cap_amount + 1e-9:
                     best = sym
@@ -149,7 +206,7 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
             if best is None:
                 break
             shares[best] += 1
-            deployed += float(by_symbol[best]["price"])
+            deployed += float(by_symbol[best]["price_pln"])
 
     dropped = [s for s in shares if shares[s] <= 0]
     allocs = []
@@ -157,15 +214,19 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         if shares[sym] <= 0:
             continue
         c = by_symbol[sym]
-        price = float(c["price"])
-        cost = shares[sym] * price
+        price_raw = float(c["price"])
+        price_pln = float(c["price_pln"])
+        cost = shares[sym] * price_pln
         allocs.append({
             "symbol": sym,
-            "price": round_or_none(price),
+            "currency": c.get("currency"),
+            "price": round_or_none(price_raw),
+            "price_pln": round_or_none(price_pln),
             "score": round_or_none(c["score"]),
             "target_weight_pct": round_or_none(weights[sym] * 100),
             "shares": shares[sym],
             "cost": round_or_none(cost),
+            "cost_pln": round_or_none(cost),
             "actual_weight_pct": round_or_none(cost / budget * 100),
         })
     allocs.sort(key=lambda a: a["cost"], reverse=True)
@@ -219,6 +280,8 @@ def main() -> None:
                    help="Fraction of budget to keep as cash (0-1)")
     p.add_argument("--no-sweep", action="store_true",
                    help="Disable sweeping leftover cash into affordable top names")
+    p.add_argument("--usdpln", type=float,
+                   help="Override USDPLN FX rate. If omitted, fetched from yfinance")
     args = p.parse_args()
 
     if args.candidates_file:
@@ -234,7 +297,7 @@ def main() -> None:
     emit(allocate(
         args.budget, candidates, max_weight=args.max_weight, min_score=args.min_score,
         top=args.top, score_power=args.score_power, reserve_pct=args.reserve_pct,
-        sweep=not args.no_sweep, holdings=holdings,
+        sweep=not args.no_sweep, holdings=holdings, usdpln=args.usdpln,
     ))
 
 
