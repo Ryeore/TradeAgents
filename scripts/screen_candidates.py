@@ -23,7 +23,7 @@ PRESETS = {
                  "MBR.WA", "SNT.WA","ASB.WA"],
     "us_mega": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "TSLA", "MU"],
     "current_portfolio": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
-                          "MBR.WA", "SNT.WA","ASB.WA", "NVDA", "AVGO", "MU", "AVGO"]
+                          "MBR.WA", "SNT.WA", "ASB.WA", "NVDA", "AVGO", "MU"],
 }
 
 
