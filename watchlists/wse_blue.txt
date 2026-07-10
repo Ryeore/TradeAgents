@@ -10,7 +10,7 @@ PEO.WA       # Bank Pekao
 KGH.WA       # KGHM Polska Miedź
 PZU.WA       # PZU
 LPP.WA       # LPP
-SPL.WA       # Erste Bank Polska (formerly Santander Bank Polska)
+EBP.WA       # Erste Bank Polska (formerly Santander Bank Polska)
 ALE.WA       # Allegro
 CDR.WA       # CD Projekt
 DNP.WA       # Dino Polska

@@ -12,6 +12,10 @@ output/
 *.json.cache
 .cache/
 agentsReporting/
+agentReports/
+
+# Local data / generated JSON
+*.json
 
 # Env
 .env
