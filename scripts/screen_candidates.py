@@ -27,12 +27,7 @@ PRESETS = {
 }
 
 
-# TEMP_PRESETS = {
-#     "wse_blue": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
-#                  "MBR.WA", "SNT.WA", "PKN.WA", "PEO.WA", "DNP.WA", "ALE.WA",
-#                  "CDR.WA", "LPP.WA", "KGH.WA", "PZU.WA", "EBP.WA", "OPL.WA"],
-#     "us_mega": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "TSLA"],
-# }
+# (Removed TEMP_PRESETS; rely on git history or add a real preset name instead of keeping commented-out lists.)
 
 
 def clamp(x, lo=0.0, hi=100.0):
