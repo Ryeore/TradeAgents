@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.common import emit, get_ticker, last_price, round_or_none, safe_info  # noqa: E402
 
 
-def read_json_file(path: str):
+def read_json_file(path: str) -> object:
     """Read JSON from files encoded as UTF-8/UTF-16 with or without BOM."""
     with open(path, "rb") as fh:
         data = fh.read()
