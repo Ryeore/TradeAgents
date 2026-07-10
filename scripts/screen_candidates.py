@@ -50,7 +50,8 @@ def _pct(v):
     return v * 100 if abs(v) < 5 else v
 
 
-def avg(parts):
+def avg(parts: list[float | None]) -> float | None:
+    """Return the mean of non-None values, rounded to 1 decimal."""
     vals = [p for p in parts if p is not None]
     return round(sum(vals) / len(vals), 1) if vals else None
 
