@@ -56,14 +56,82 @@ def load_candidates(obj) -> list[dict]:
         if not isinstance(r, dict):
             continue
         score = r.get("score", r.get("screen_score", r.get("conviction")))
+        data_quality = r.get("data_quality") if isinstance(r.get("data_quality"), dict) else {}
+        coverage_pct = data_quality.get("coverage_pct")
+        if coverage_pct is None and data_quality.get("coverage_ratio") is not None:
+            coverage_pct = float(data_quality.get("coverage_ratio")) * 100.0
         out.append({
             "symbol": r.get("symbol"),
             "price": r.get("price"),
             "currency": r.get("currency"),
             "score": score,
             "atr": r.get("atr"),
+            "value_score": r.get("value_score"),
+            "quality_score": r.get("quality_score"),
+            "trend_score": r.get("trend_score", r.get("momentum_score")),
+            "momentum_score": r.get("momentum_score", r.get("trend_score")),
+            "sentiment_score": r.get("sentiment_score"),
+            "risk_score": r.get("risk_score"),
+            "confidence_score": r.get("confidence_score", coverage_pct),
+            "raw_screen_score": r.get("raw_screen_score"),
+            "screen_score": r.get("screen_score"),
+            "conviction": r.get("conviction"),
         })
     return out
+
+
+def weighted_mean_available(parts: list[tuple[float | None, float]]) -> float | None:
+    vals = [(v, w) for v, w in parts if v is not None and w > 0]
+    if not vals:
+        return None
+    wsum = sum(w for _, w in vals)
+    if wsum <= 0:
+        return None
+    return sum(v * w for v, w in vals) / wsum
+
+
+def confidence_multiplier(confidence_score: float | None, floor: float = 0.7) -> float:
+    """Map confidence in [0,100] to a multiplier in [floor,1.0]."""
+    if confidence_score is None:
+        return 1.0
+    c = max(0.0, min(100.0, float(confidence_score)))
+    return float(floor + (1.0 - floor) * (c / 100.0))
+
+
+def derive_allocation_score(
+    candidate: dict,
+    *,
+    use_components: bool,
+    apply_confidence: bool,
+    confidence_floor: float,
+    value_w: float,
+    quality_w: float,
+    trend_w: float,
+    sentiment_w: float,
+    risk_w: float,
+) -> tuple[float | None, str]:
+    """Build an allocation score with graceful fallback to legacy score fields."""
+    legacy = candidate.get("score", candidate.get("screen_score", candidate.get("conviction")))
+
+    component_base = None
+    if use_components:
+        component_base = weighted_mean_available([
+            (candidate.get("value_score"), value_w),
+            (candidate.get("quality_score"), quality_w),
+            (candidate.get("trend_score", candidate.get("momentum_score")), trend_w),
+            (candidate.get("sentiment_score"), sentiment_w),
+            (candidate.get("risk_score"), risk_w),
+        ])
+
+    base = component_base if component_base is not None else legacy
+    if base is None:
+        return None, "none"
+
+    if apply_confidence:
+        mult = confidence_multiplier(candidate.get("confidence_score"), floor=confidence_floor)
+        return float(base) * mult, "components+confidence" if component_base is not None else "legacy+confidence"
+
+    return float(base), "components" if component_base is not None else "legacy"
 
 
 def normalize_currency(symbol: str | None, currency: str | None) -> str:
@@ -140,16 +208,42 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
              min_score: float = 0.0, top: int = 0, score_power: float = 1.5,
              reserve_pct: float = 0.0, sweep: bool = True,
              holdings: list[dict] | None = None,
-             usdpln: float | None = None) -> dict:
+             usdpln: float | None = None,
+             min_fractional_share: float = 0.5,
+             use_component_scores: bool = True,
+             apply_confidence: bool = True,
+             confidence_floor: float = 0.7,
+             value_weight: float = 0.20,
+             quality_weight: float = 0.20,
+             trend_weight: float = 0.30,
+             sentiment_weight: float = 0.20,
+             risk_weight: float = 0.10) -> dict:
     """Distribute `budget` across candidates weighted by score**score_power."""
     if usdpln is None:
         usdpln = fetch_usdpln_rate()
 
     normalized, skipped = convert_candidates_to_pln(candidates, float(usdpln))
-    usable = [c for c in normalized
-              if c.get("price_pln") and c.get("score") is not None and c["price_pln"] > 0
-              and c["score"] >= min_score]
-    usable.sort(key=lambda c: c["score"], reverse=True)
+
+    enriched: list[dict] = []
+    for c in normalized:
+        alloc_score, score_source = derive_allocation_score(
+            c,
+            use_components=use_component_scores,
+            apply_confidence=apply_confidence,
+            confidence_floor=confidence_floor,
+            value_w=value_weight,
+            quality_w=quality_weight,
+            trend_w=trend_weight,
+            sentiment_w=sentiment_weight,
+            risk_w=risk_weight,
+        )
+        c2 = {**c, "allocation_score": alloc_score, "allocation_score_source": score_source}
+        enriched.append(c2)
+
+    usable = [c for c in enriched
+              if c.get("price_pln") and c.get("allocation_score") is not None and c["price_pln"] > 0
+              and c["allocation_score"] >= min_score]
+    usable.sort(key=lambda c: c["allocation_score"], reverse=True)
     if top:
         usable = usable[:top]
 
@@ -164,10 +258,24 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
             "score_power": score_power,
             "cash_reserve_pct": round(reserve_pct * 100, 1),
             "leftover_sweep": sweep,
+            "min_fractional_share": round_or_none(min_fractional_share),
+            "use_component_scores": use_component_scores,
+            "apply_confidence": apply_confidence,
+            "confidence_floor": round_or_none(confidence_floor),
+            "allocation_weights": {
+                "value": round_or_none(value_weight),
+                "quality": round_or_none(quality_weight),
+                "trend": round_or_none(trend_weight),
+                "sentiment": round_or_none(sentiment_weight),
+                "risk": round_or_none(risk_weight),
+            },
         },
         "allocations": [],
         "summary": {},
-        "note": "Weights scale with score^score_power, capped per name. Shares are whole "
+        "note": "Weights scale with allocation_score^score_power, capped per name. "
+                "Allocation score uses component scores (value/quality/trend/sentiment/risk) "
+                "when available, otherwise falls back to legacy score/screen_score/conviction. "
+                "Shares are whole "
                 "units; leftover cash is swept into the highest-scored affordable names "
                 "(still under the per-name cap). Budget is PLN; USD prices are converted "
                 "using fx_usdpln. Educational, not financial advice.",
@@ -175,10 +283,10 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
     if skipped:
         result["skipped_candidates"] = skipped
     if not usable:
-        result["summary"] = {"error": "no usable candidates (need price and score)"}
+        result["summary"] = {"error": "no usable candidates (need price and allocation score)"}
         return result
 
-    raw = {c["symbol"]: float(c["score"]) ** score_power for c in usable}
+    raw = {c["symbol"]: float(c["allocation_score"]) ** score_power for c in usable}
     tot = sum(raw.values())
     weights = {k: v / tot for k, v in raw.items()} if tot > 0 else raw
     weights = apply_weight_cap(weights, max_weight)
@@ -187,14 +295,46 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
     by_symbol = {c["symbol"]: c for c in usable}
     cap_amount = max_weight * budget
 
-    # --- initial whole-share allocation by target weight ----------------- #
-    shares = {sym: int((investable * w) // float(by_symbol[sym]["price_pln"]))
-              for sym, w in weights.items()}
+    # --- initial allocation by target weight with optional 0.x->1 round-up --- #
+    target_shares = {
+        sym: (investable * w) / float(by_symbol[sym]["price_pln"]) for sym, w in weights.items()
+    }
+    rounded_up_symbols: set[str] = set()
+    shares: dict[str, int] = {}
+    for sym, frac in target_shares.items():
+        n = int(frac)
+        if n == 0 and min_fractional_share > 0 and frac >= min_fractional_share:
+            n = 1
+            rounded_up_symbols.add(sym)
+        shares[sym] = n
+
     deployed = sum(shares[s] * float(by_symbol[s]["price_pln"]) for s in shares)
+
+    # If round-up pushes us over budget, trim back the weakest rounded names first.
+    if deployed > investable + 1e-9:
+        trim_order = sorted(
+            [
+                s for s in shares if shares[s] > 0
+            ],
+            key=lambda s: (
+                0 if s in rounded_up_symbols else 1,
+                by_symbol[s].get("allocation_score") or 0,
+                float(by_symbol[s].get("price_pln") or 0),
+            ),
+        )
+        for sym in trim_order:
+            while shares[sym] > 0 and deployed > investable + 1e-9:
+                shares[sym] -= 1
+                deployed -= float(by_symbol[sym]["price_pln"])
+            if deployed <= investable + 1e-9:
+                break
+
+    rounded_up_buys = [s for s in rounded_up_symbols if shares.get(s, 0) > 0]
+    rounded_up_dropped = [s for s in rounded_up_symbols if shares.get(s, 0) <= 0]
 
     # --- greedy leftover sweep: fill best names first, respect the cap --- #
     if sweep:
-        ranked = sorted(usable, key=lambda c: c["score"], reverse=True)
+        ranked = sorted(usable, key=lambda c: c["allocation_score"], reverse=True)
         while True:
             best = None
             for c in ranked:
@@ -222,7 +362,17 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
             "currency": c.get("currency"),
             "price": round_or_none(price_raw),
             "price_pln": round_or_none(price_pln),
-            "score": round_or_none(c["score"]),
+            "allocation_score": round_or_none(c.get("allocation_score")),
+            "allocation_score_source": c.get("allocation_score_source"),
+            "score": round_or_none(c.get("score")),
+            "screen_score": round_or_none(c.get("screen_score")),
+            "conviction": round_or_none(c.get("conviction")),
+            "confidence_score": round_or_none(c.get("confidence_score")),
+            "value_score": round_or_none(c.get("value_score")),
+            "quality_score": round_or_none(c.get("quality_score")),
+            "trend_score": round_or_none(c.get("trend_score", c.get("momentum_score"))),
+            "sentiment_score": round_or_none(c.get("sentiment_score")),
+            "risk_score": round_or_none(c.get("risk_score")),
             "target_weight_pct": round_or_none(weights[sym] * 100),
             "shares": shares[sym],
             "cost": round_or_none(cost),
@@ -237,6 +387,8 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         "cash_pct": round_or_none((budget - deployed) / budget * 100) if budget else None,
         "num_positions": len(allocs),
         "dropped_below_one_share": dropped,
+        "rounded_up_to_one_share": sorted(rounded_up_buys),
+        "rounded_up_but_trimmed": sorted(rounded_up_dropped),
     }
 
     if holdings:
@@ -282,6 +434,24 @@ def main() -> None:
                    help="Disable sweeping leftover cash into affordable top names")
     p.add_argument("--usdpln", type=float,
                    help="Override USDPLN FX rate. If omitted, fetched from yfinance")
+    p.add_argument("--min-fractional-share", type=float, default=0.5,
+                   help="If target size is >= this fraction of a share, round up to 1 share")
+    p.add_argument("--use-legacy-score", action="store_true",
+                   help="Disable component-based allocation score and use legacy score fields only")
+    p.add_argument("--no-confidence", action="store_true",
+                   help="Disable confidence-based score adjustment")
+    p.add_argument("--confidence-floor", type=float, default=0.7,
+                   help="Minimum multiplier for confidence adjustment (0-1)")
+    p.add_argument("--w-value", type=float, default=0.20,
+                   help="Allocation component weight: value")
+    p.add_argument("--w-quality", type=float, default=0.20,
+                   help="Allocation component weight: quality")
+    p.add_argument("--w-trend", type=float, default=0.30,
+                   help="Allocation component weight: trend")
+    p.add_argument("--w-sentiment", type=float, default=0.20,
+                   help="Allocation component weight: sentiment")
+    p.add_argument("--w-risk", type=float, default=0.10,
+                   help="Allocation component weight: risk")
     args = p.parse_args()
 
     if args.candidates_file:
@@ -298,6 +468,15 @@ def main() -> None:
         args.budget, candidates, max_weight=args.max_weight, min_score=args.min_score,
         top=args.top, score_power=args.score_power, reserve_pct=args.reserve_pct,
         sweep=not args.no_sweep, holdings=holdings, usdpln=args.usdpln,
+        min_fractional_share=args.min_fractional_share,
+        use_component_scores=not args.use_legacy_score,
+        apply_confidence=not args.no_confidence,
+        confidence_floor=args.confidence_floor,
+        value_weight=args.w_value,
+        quality_weight=args.w_quality,
+        trend_weight=args.w_trend,
+        sentiment_weight=args.w_sentiment,
+        risk_weight=args.w_risk,
     ))
 
 

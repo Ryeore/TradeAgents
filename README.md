@@ -1,76 +1,22 @@
-# 📊 Stock Skills — A 9-Analyst Investment Committee
+# Stock Scripts Toolkit
 
-Run a full bottom-up + top-down workup on any stock — from idea screening to a
-sized, risk-managed trade plan — driven by a 9-analyst committee.
+Script-first toolkit for stock screening, technical/fundamental snapshots, score aggregation, and budget allocation.
 
-Three ways to run it, all sharing the same engine:
+This repository now keeps only the deterministic Python workflow under `scripts/`. The former CrewAI orchestration layer has been removed.
 
-- **CrewAI** (`crew/`) — automated multi-agent pipeline. **← this README focuses here.**
-- **Agent Skills** (`skills/`) — markdown playbooks for Claude / Copilot.
-- **Scripts** (`scripts/`) — deterministic Python math tools you can call directly (no API key).
-
-> ⚠️ **Not financial advice.** An educational research and risk-management
-> framework. You are responsible for your own decisions.
+> Not financial advice. This is an educational research and risk-management toolkit.
 
 ---
 
-## 🚀 Quickstart
+## Quickstart
 
 ```powershell
-# 1. Install  (Python 3.10–3.13)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# 2. Configure the LLM key  (only needed for the CrewAI agents)
-copy .env.example .env
-#    then edit .env: set ANALYST_DESK_MODEL and your OPENAI_API_KEY (or another provider)
-
-# 3. Run
-python -m crew.main AAPL --account 50000 --risk 1     # full desk + trade plan on AAPL
-python -m crew.main --portfolio --budget 2000 --preset wse_blue --top 8   # allocate a budget
-python -m crew.main AAPL --plan                        # preview the pipeline (no API key)
 ```
 
-No API key yet? The deterministic parts still work on their own:
-
-```powershell
-python scripts/fetch_quote.py AAPL                                # live quote JSON
-python scripts/screen_candidates.py --preset wse_blue --top 8     # rank a watchlist
-```
-
----
-
-## The committee
-
-| # | Skill | Role | Script(s) |
-|---|-------|------|-----------|
-| 1 | `data-scout` | Live price, EPS vs consensus, targets, breaking news | `fetch_quote.py` |
-| 2 | `macro-strategist` | Fed/rates, business cycle, sector vs index | `fetch_macro.py` |
-| 3 | `data-hunter` | P/E, EV/EBITDA, FCF yield, ROIC, ownership | `fetch_fundamentals.py` |
-| 4 | `sentiment-analyst` | Short interest, 13F, insider transactions | `fetch_sentiment.py` |
-| 5 | `the-bear` | Hardwired to find reasons NOT to buy | (reuses above) |
-| 6 | `the-chartist` | MA20/50/200, RSI, MFI, Fibonacci, entry, ATR | `fetch_technicals.py` |
-| 7 | `devils-advocate` | Attacks blind spots in every prior report | — |
-| 8 | `the-cio` | Verdict + 1–10 scorecard across 5 dimensions | `scorecard.py` |
-| 9 | `portfolio-manager` | Sizing, DCA tranches, stop loss, two targets | `position_sizer.py` |
-| ★ | `analyst-desk` | Orchestrates all 9 end-to-end | (all) |
-
-**Pipeline:**
-
-```
-Data Scout ─┐
-Macro ──────┤
-Data Hunter ┼─► The Bear ─► Devil's Advocate ─► The CIO ─► Portfolio Manager
-Sentiment ──┤                                   (verdict +     (size, DCA,
-Chartist ───┘                                    scorecard)     stop, targets)
-```
-
----
-
-## Smoke-test the scripts
-
-Every script prints JSON and needs **no API key**:
+Smoke-test the core scripts:
 
 ```powershell
 python scripts/fetch_quote.py AAPL
@@ -84,51 +30,55 @@ python scripts/position_sizer.py --price 100 --atr 3.2 --conviction 7 --account 
 
 ---
 
-## How to run
+## Main Scripts
 
-### CrewAI (recommended — automated pipeline)
+| Script | Purpose |
+|---|---|
+| `fetch_quote.py` | Live quote, analyst targets, earnings context |
+| `fetch_fundamentals.py` | Fundamental and valuation snapshot |
+| `fetch_technicals.py` | Trend, RSI, MFI, ATR, Fibonacci levels |
+| `fetch_sentiment.py` | Short interest, analyst trend, insider/institutional context |
+| `fetch_macro.py` | Rates and sector-relative macro backdrop |
+| `screen_candidates.py` | Multi-factor ranking across a watchlist or universe |
+| `portfolio_allocator.py` | Converts ranked candidates into a whole-share buy plan |
+| `position_sizer.py` | Risk-based position sizing for a single name |
+| `scorecard.py` | Weighted composite score and verdict band |
+| `view_results.py` | Terminal and Markdown dashboards for screen/allocation outputs |
 
-The `crew/` package runs the nine analysts as a **CrewAI** crew. Each analyst is
-an `Agent` whose persona is loaded live from its `skills/*/*.md` file, and every
-deterministic script is exposed as a CrewAI tool — so the markdown stays the
-single source of truth for personas and the scripts for the math.
+WSE names require the `.WA` suffix, for example `CDR.WA` or `KRU.WA`.
 
-Run `python -m crew.main <TICKER> [options]`:
+---
 
-| Command | What it does | API key? |
-|---------|--------------|:---:|
-| `python -m crew.main AAPL --account 50000 --risk 1` | Full 9-analyst desk **+ sized trade plan** | yes |
-| `python -m crew.main AAPL --analysis` | Analysts 1–8 + report, no position sizing | yes |
-| `python -m crew.main AAPL --quick` | Data Scout snapshot only | yes |
-| `python -m crew.main --screen --preset wse_blue --top 8` | Rank a watchlist (Opportunity Scout) | yes |
-| `python -m crew.main --portfolio --budget 2000 --preset wse_blue --top 8` | Split a budget across the best names | yes |
-| `python -m crew.main --portfolio --deep --budget 2000 --preset wse_blue --top 6` | …weighted by full-desk CIO conviction | yes |
-| `python -m crew.main AAPL --plan` | Print the pipeline plan and exit | **no** |
+## Core Workflow
 
-- **Tickers:** WSE names need the `.WA` suffix (e.g. `CDR.WA`, `KRU.WA`).
-- **Model:** set `ANALYST_DESK_MODEL` in `.env` — any LiteLLM id
-  (`gpt-4o-mini`, `anthropic/claude-3-5-sonnet-latest`, `azure/<deployment>`, …).
-- **Output:** seats run sequentially (each receives the upstream reports as
-  `context`) and each writes one markdown file to `agentReports/<TICKER>/` —
-  `01-data-scout.md` … `09-portfolio-manager.md`, `99-final-report.md`.
+### Screen a universe
 
-### Other ways to run
+```powershell
+python scripts/screen_candidates.py --preset wse_blue --top 8 > screen.json
+```
 
-- **Scripts only (no API key):** run any `scripts/*.py` and read the JSON —
-  e.g. `python scripts/fetch_quote.py AAPL`. Each script's docstring lists its args.
-- **Claude / Claude Code:** point the agent at this folder so it discovers
-  `skills/`, then ask *"Run the analyst desk on NVDA, $50k account, 1% risk."* The
-  `analyst-desk` skill orchestrates the other eight and returns one report.
-- **GitHub Copilot / VS Code:** the skills are markdown playbooks — ask Copilot to
-  run a script and follow the matching `skills/<name>/*.md` to interpret the JSON.
+### Allocate a budget across the shortlist
 
-### Portfolio allocation — details
+```powershell
+python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen.json --top 6 > alloc.json
+```
+
+### Render readable dashboards
+
+```powershell
+python scripts/view_results.py --screen-file screen.json --top 10
+python scripts/view_results.py --screen-file screen.json --allocation-file alloc.json --top 10 --out-md output/dashboard.md
+```
+
+---
+
+## Portfolio Allocation
 
 The `--portfolio` flow answers *“I have 2000 PLN — which stocks and what %?”*: the
 Opportunity Scout screens the universe, then the Portfolio Manager splits the
 budget across the best-scored names. The math lives in
 [`scripts/portfolio_allocator.py`](scripts/portfolio_allocator.py) and runs
-standalone with **no LLM/API key**:
+standalone:
 
 ```powershell
 python scripts/screen_candidates.py --preset wse_blue --top 8 > screen.json
@@ -145,6 +95,25 @@ python scripts/screen_candidates.py --preset us_mega --top 10 > screen.json
 python scripts/portfolio_allocator.py --budget 700 --candidates-file screen.json --top 10
 ```
 
+### Better result visibility (terminal + markdown dashboard)
+
+Use the dashboard utility to render cleaner, side-by-side summaries from raw JSON:
+
+```powershell
+# Screen table (rank, score, trend, sentiment, risk, confidence)
+python scripts/view_results.py --screen-file screen.json --top 10
+
+# Combined screen + allocation table and markdown report
+python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen.json --top 6 > alloc.json
+python scripts/view_results.py --screen-file screen.json --allocation-file alloc.json --top 10 --out-md output/dashboard.md
+```
+
+What you get:
+
+- Terminal dashboards for fast readout during iteration.
+- A markdown report at [output/dashboard.md](output/dashboard.md) for sharing, journaling, or diffing runs.
+- Confidence tags (`HIGH`/`MED`/`LOW`) plus score source visibility in allocation rows.
+
 The first command writes the screener output to `screen.json`. The second reads
 that file and converts the ranked candidates into a concrete buy plan using the
 requested cash budget and top-N cutoff.
@@ -153,43 +122,56 @@ How to read the screener output (`screen.json`):
 
 - Top-level metadata: `universe_size`, `method`, `next_step`, `disclaimer`.
 - Main payload: `ranked` is the ordered candidate list, best first.
-- Per stock: `symbol`, `price`, `screen_score`, `value_score`, `quality_score`,
-  `momentum_score`.
-- Detailed inputs: `signals` contains the raw drivers such as analyst upside,
-  forward P/E, P/B, dividend yield, ROE, revenue growth, 6-month return, RSI,
-  and whether price is above the 50/200-day averages.
+- Per stock (core): `symbol`, `price`, `screen_score`, `raw_screen_score`,
+  `confidence_score`, `value_score`, `quality_score`, `trend_score`,
+  `momentum_score` (alias of `trend_score`), `sentiment_score`, `risk_score`.
+- Per stock (details): `signals` includes the raw factor inputs and
+  `data_quality` includes coverage diagnostics.
 
 In practice, read `ranked[0]`, `ranked[1]`, and so on as your shortlist. The
 most important field is `screen_score`: higher means a stronger blended
-value/quality/momentum candidate for deeper analysis, not an automatic buy.
+value/quality/trend/sentiment/risk candidate for deeper analysis, not an
+automatic buy.
 
 How `screen_score` is calculated:
 
-- Each raw signal is mapped to a 0-100 score using a clamped linear scale.
-- Value score = mean of:
-  - analyst upside (`-20%` to `40%`, higher is better)
-  - forward P/E (`40` to `5`, lower is better)
-  - price/book (`8` to `0.5`, lower is better)
-  - dividend yield (`0%` to `8%`, higher is better)
-- Quality score = mean of:
-  - ROE (`0%` to `30%`)
-  - revenue growth (`0%` to `40%`)
-- Momentum score = mean of:
-  - 6-month return (`-30%` to `40%`)
-  - RSI14 (`30` to `70`)
-  - price above MA50 (100 if true, else 0)
-  - price above MA200 (100 if true, else 0)
-- Final `screen_score` = mean(`value_score`, `quality_score`, `momentum_score`).
-- Missing signals are skipped (None-tolerant averaging), so a stock can still
-  receive a score when some fields are unavailable.
+- The screener builds 5 pillar scores (0-100):
+  - Value (20%): upside, valuation and cash-flow yield style inputs.
+  - Quality (20%): profitability and growth quality inputs.
+  - Trend (30%): multi-horizon returns + MA structure/slope + RSI and 52w context.
+  - Sentiment (20%): recommendation trend, analyst coverage, short interest.
+  - Risk (10%): ATR% and drawdown stability context.
+- Most sub-factors are normalized as within-universe percentiles, which improves
+  comparability across mixed universes and regimes.
+- `raw_screen_score` is the weighted blend before confidence adjustment.
+- `screen_score` applies a data-confidence multiplier from coverage
+  (`confidence_score`) so sparse-data names are penalized instead of over-ranked.
 
 How allocation uses that score:
 
 - The allocator does not recompute fundamentals/technicals.
-- It takes `score` from input, falling back to `screen_score` (or `conviction`
-  in deep mode), then computes raw weights as `score ** score_power`.
+- It computes `allocation_score` per candidate.
+- Default behavior (`portfolio_allocator.py`) uses component scores when present:
+  weighted value/quality/trend/sentiment/risk, with optional confidence
+  adjustment.
+- If components are missing (or `--use-legacy-score` is passed), it falls back to
+  legacy score fields (`score`, then `screen_score`, then `conviction`).
+- If computed size is at least `--min-fractional-share` (default `0.5`) but below
+  one full share, the allocator rounds up to one share and trims back weaker
+  rounded names if needed to stay within budget.
+- Position concentration still scales as `allocation_score ** score_power`.
 - Those raw weights are normalized, capped by `--max-weight`, converted to
   whole shares, and then adjusted by leftover-cash sweep.
+
+Useful allocator switches:
+
+- `--use-legacy-score`: disable component mode and use legacy score fields only.
+- `--no-confidence`: disable confidence-based penalty/adjustment.
+- `--confidence-floor 0.7`: minimum confidence multiplier.
+- `--min-fractional-share 0.5`: round small positions up to one share when the
+  target size is at least this fraction.
+- `--w-value`, `--w-quality`, `--w-trend`, `--w-sentiment`, `--w-risk`:
+  override component weights for allocation.
 
 How to read the portfolio allocation output:
 
@@ -205,14 +187,19 @@ How to read the portfolio allocation output:
   - `currency`: instrument currency (`PLN` or `USD`).
   - `price`: native instrument price (e.g., USD for US stocks).
   - `price_pln`: normalized PLN price used by the allocator math.
-  - `score`: ranking score used for weighting.
+  - `allocation_score`: effective score used for weighting.
+  - `allocation_score_source`: whether score came from components or legacy fallback.
+  - `score` / `screen_score` / `conviction`: pass-through source fields for traceability.
+  - `confidence_score`: confidence percentage used if confidence mode is enabled.
+  - component fields (`value_score`, `quality_score`, `trend_score`,
+    `sentiment_score`, `risk_score`) when available.
   - `target_weight_pct`: model target before whole-share rounding.
   - `shares`: integer shares to buy.
   - `cost` / `cost_pln`: planned spend in PLN for that row.
   - `actual_weight_pct`: realized portfolio weight after rounding.
 - `summary`: total `deployed`, `leftover_cash`, `cash_pct`, number of
-  positions, and any names dropped because they were too expensive to buy even
-  one share.
+  positions, names dropped because they were too expensive to buy even
+  one share, and which names were rounded up or trimmed.
 
 Example interpretation of a sample row:
 
@@ -235,6 +222,8 @@ Example interpretation of a sample row:
       "currency": "PLN",
       "price": 123.08,
       "price_pln": 123.08,
+      "allocation_score": 76.6,
+      "allocation_score_source": "components+confidence",
       "score": 76.6,
       "target_weight_pct": 12.42,
       "shares": 14,
@@ -247,7 +236,7 @@ Example interpretation of a sample row:
 ```
 
 In this example, your total budget is `5000 PLN`. The model first computes
-target weights from scores (`score_power=1.5`), then applies the 35% cap and
+target weights from allocation scores (`score_power=1.5`), then applies the 35% cap and
 whole-share rounding. For `XTB.WA`, buying `14` shares at `123.08 PLN` spends
 `1723.12 PLN`, which is `34.46%` of the full budget.
 
@@ -260,90 +249,13 @@ shows the model's ideal weighting before whole-share rounding, while
 `actual_weight_pct` shows what was really achieved after converting the budget
 into buyable share counts.
 
-Weights scale with each name's score (`score ** score_power`), are **capped per
+Weights scale with each name's effective allocation score (`allocation_score ** score_power`), are **capped per
 name** (`--max-weight`, default 35%), converted to **whole shares**, and any
 leftover cash is **swept** into the highest-scored affordable names so the budget
-is actually deployed. Pass `--holdings-file` (a `[{symbol, value}]` JSON) to see
+is actually deployed. In component mode, this score is the computed
+`allocation_score`; in legacy mode, it is the fallback raw score.
+Pass `--holdings-file` (a `[{symbol, value}]` JSON) to see
 the *combined* portfolio weights after the new money lands.
-
-**By conviction, not just the screen (`--deep`):** the screen score is a coarse
-value/quality/momentum filter. To weight the budget by the full committee's
-verdict instead, run the desk on every shortlisted name and allocate by each
-CIO **conviction** (1–10):
-
-```powershell
-python -m crew.main --portfolio --deep --budget 2000 --preset wse_blue --top 6
-```
-
-This runs the analysts-1→8 (`conviction`) pipeline per name, parses each CIO
-conviction, and allocates by it — writing `agentReports/PORTFOLIO/deep-allocation.md`.
-It needs an LLM key (one desk per name); the plain `--portfolio` path does not.
-
----
-
-## Deploy to CrewAI AMP
-
-The desk is also packaged as a **CrewAI Flow** so it can be deployed as an
-automation on [CrewAI AMP](https://app.crewai.com). The Flow
-([`src/analyst_desk/flow.py`](src/analyst_desk/flow.py)) routes an input `mode`
-to the matching pipeline and reuses the same `crew/` logic:
-
-| `mode` | behaviour | key inputs |
-|--------|-----------|-----------|
-| `full` / `analysis` / `quick` | single-ticker desk | `ticker`, `account`, `risk_pct` |
-| `screen` | Opportunity Scout screen | `preset` / `ticker`, `top` |
-| `portfolio` (`deep=false`) | screen → budget allocation | `budget`, `preset`, `top` |
-| `portfolio` (`deep=true`) | full desk per name → conviction allocation | `budget`, `preset`, `top` |
-
-### Inputs (all 11 optional)
-
-AMP surfaces every [`DeskState`](src/analyst_desk/flow.py) field as an automation
-input. All 11 are **optional** — each has a sensible default, so you only set the
-ones your chosen `mode` needs (see the table above). Example placeholder values:
-
-| Input | Type | Default | Accepts / example | What it does |
-|-------|------|---------|-------------------|--------------|
-| `mode` | string | `"full"` | `full` \| `analysis` \| `quick` \| `screen` \| `portfolio` | Which pipeline to run. |
-| `ticker` | string | `""` | `"AAPL"`, `"CDR.WA"`, or a list `"AAPL MSFT NVDA"` | Single symbol to analyse; a space/comma list feeds `portfolio --deep`. WSE names need the `.WA` suffix. |
-| `account` | number | `null` | `50000` | Account value (portfolio currency) used by the Portfolio Manager to size the position. Required for `full`; without it, `full` degrades to `analysis`. |
-| `risk_pct` | number | `1.0` | `0.5`, `1`, `2` | Percent of the account risked per trade at the stop. |
-| `budget` | number | `null` | `2000` | Cash to deploy across names in `portfolio` mode. |
-| `preset` | string | `null` | `wse_blue` \| `us_mega` | Built-in watchlist to screen/allocate over (from `watchlists/`). |
-| `top` | integer | `0` | `6`, `8`, `10` | How many top-ranked names to keep from the screen (`0` = the mode's default). |
-| `deep` | boolean | `false` | `true` \| `false` | `portfolio` only: run the full desk per name and weight the budget by each CIO conviction instead of the screen score. |
-| `universe` | string | `null` | `"AAPL MSFT NVDA GOOGL"` | Explicit ticker universe to screen when you don't want a `preset`. |
-| `model` | string | `null` | `gpt-4o-mini`, `anthropic/claude-3-5-sonnet-latest`, `azure/<deployment>` | LiteLLM model id override (else falls back to `ANALYST_DESK_MODEL`). |
-| `result` | string | `""` | — | Output field — populated with the final report; leave unset on input. |
-
-Deployment artifacts: [`pyproject.toml`](pyproject.toml) (`[tool.crewai] type = "flow"`),
-the `src/analyst_desk/` package with a `kickoff()` entry point, and a committed
-`uv.lock`.
-
-```powershell
-# one-time: authenticate, then deploy from this repo (pushed to GitHub)
-pip install "crewai[tools]"
-crewai login
-crewai deploy create        # detects the GitHub repo + .env vars, builds the Flow
-crewai deploy status        # watch the build; first deploy ~1 min
-```
-
-You can also deploy from the web UI: **Connect GitHub** at app.crewai.com, pick
-this repo, set env vars (`OPENAI_API_KEY` / `ANALYST_DESK_MODEL`), and Deploy.
-AMP exposes `/inputs`, `/kickoff` and `/status/{id}`; kick off with e.g.
-`{ "mode": "portfolio", "deep": true, "budget": 2000, "preset": "wse_blue", "top": 6 }`.
-
-> **Note:** the data tools call `yfinance` (Yahoo). On cloud IPs Yahoo may
-> rate-limit or intermittently 404 some tickers (especially thin WSE names), so
-> deployed runs can be flakier than local ones.
-
-Run the Flow locally too:
-
-```powershell
-$env:DESK_INPUTS = '{"mode":"quick","ticker":"AAPL"}'
-python -m analyst_desk.main        # or: crewai run   (with src on the path)
-```
-
----
 
 ## The 5-dimension scorecard
 
@@ -391,10 +303,8 @@ TradeAgents/
 ├─ requirements.txt
 ├─ lib/common.py            # yfinance wrappers + indicators (RSI, MFI, ATR, Fib)
 ├─ scripts/                 # deterministic data + math tools (JSON out)
-├─ skills/                  # the 10 analysts + analyst-desk orchestrator
-├─ crew/                    # CrewAI layer: tools (script wrappers) + desk + CLI
-├─ src/analyst_desk/        # deployable CrewAI Flow (for CrewAI AMP)
-├─ pyproject.toml           # CrewAI Flow project + deps (uv.lock committed)
+├─ skills/                  # markdown playbooks / research templates
+├─ pyproject.toml           # lightweight project metadata
 ├─ watchlists/              # ticker lists for screen_candidates.py
 ├─ agentReports/            # auto-generated per-seat reports (gitignored)
 └─ output/                  # auto-generated reports (gitignored)

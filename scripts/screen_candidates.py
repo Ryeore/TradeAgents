@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.common import (  # noqa: E402
-    emit, get_ticker, history, last_price, round_or_none, rsi, safe_info, sma,
+    atr, emit, get_ticker, history, last_price, round_or_none, rsi, safe_info, sma,
 )
 
 PRESETS = {
@@ -55,11 +55,62 @@ def _pct(v):
     return v * 100 if abs(v) < 5 else v
 
 
-def screen_one(symbol):
+def avg(parts):
+    vals = [p for p in parts if p is not None]
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
+def percentile_score(value, universe_values, higher_better=True):
+    """Cross-sectional percentile score in [0,100]."""
+    if value is None:
+        return None
+    vals = sorted(v for v in universe_values if v is not None)
+    n = len(vals)
+    if n == 0:
+        return None
+    if n == 1:
+        return 50.0
+    less = sum(1 for v in vals if v < value)
+    equal = sum(1 for v in vals if v == value)
+    rank = (less + 0.5 * equal) / n
+    score = rank * 100.0
+    return round(100.0 - score if not higher_better else score, 1)
+
+
+def sweet_spot_score(value, target, slope, lo=0.0, hi=100.0):
+    """Peak score near target; linearly decays with distance by slope points/unit."""
+    if value is None:
+        return None
+    return round(clamp(100.0 - abs(value - target) * slope, lo, hi), 1)
+
+
+def structure_score(price, ma20, ma50, ma200):
+    if None in (price, ma20, ma50, ma200):
+        return None
+    if price > ma20 > ma50 > ma200:
+        return 100.0
+    if price > ma50 > ma200:
+        return 80.0
+    if price > ma200:
+        return 60.0
+    return 20.0
+
+
+def _latest(series):
+    if series is None:
+        return None
+    valid = series.dropna()
+    if valid.empty:
+        return None
+    return float(valid.iloc[-1])
+
+
+def collect_features(symbol):
+    """Collect raw value, quality, trend, sentiment, and risk features for one symbol."""
     ticker = get_ticker(symbol)
     info = safe_info(ticker)
     price = last_price(ticker, info)
-    df = history(ticker, period="1y")
+    df = history(ticker, period="2y")
 
     target = info.get("targetMeanPrice")
     upside = (target / price - 1) * 100 if price and target else None
@@ -67,60 +118,263 @@ def screen_one(symbol):
     pb = info.get("priceToBook")
     div = info.get("dividendYield")
     div = div * 100 if div and div < 1 else div
+    if div is not None and div > 25:
+        div = None
     roe = _pct(info.get("returnOnEquity"))
     rev_g = _pct(info.get("revenueGrowth"))
+    op_margin = _pct(info.get("operatingMargins"))
+    gross_margin = _pct(info.get("grossMargins"))
+    rec_mean = info.get("recommendationMean")
+    analyst_n = info.get("numberOfAnalystOpinions")
+    short_pct = _pct(info.get("shortPercentOfFloat"))
 
-    ret6m = ma50 = ma200 = rsi14 = above50 = above200 = None
+    fcf_yield = None
+    market_cap = info.get("marketCap")
+    free_cashflow = info.get("freeCashflow")
+    if market_cap and free_cashflow:
+        fcf_yield = (free_cashflow / market_cap) * 100
+
+    ret3m = ret6m = ret12m = None
+    ma20 = ma50 = ma200 = rsi14 = above50 = above200 = None
+    price_vs_ma200_pct = ma50_vs_ma200_pct = ma200_slope_3m_pct = None
+    atr14 = atr_pct = prox_52w_high_pct = max_dd_6m_pct = None
+
     if not df.empty and len(df) > 60:
         close = df["Close"]
+        high = df["High"]
+        low = df["Low"]
+
+        if len(close) >= 63:
+            ret3m = round_or_none((close.iloc[-1] / close.iloc[-63] - 1) * 100)
         if len(close) >= 126:
             ret6m = round_or_none((close.iloc[-1] / close.iloc[-126] - 1) * 100)
-        ma50 = round_or_none(sma(close, 50).iloc[-1])
+        if len(close) >= 252:
+            ret12m = round_or_none((close.iloc[-1] / close.iloc[-252] - 1) * 100)
+
+        ma20 = round_or_none(_latest(sma(close, 20)))
+        ma50 = round_or_none(_latest(sma(close, 50)))
         ma200_series = sma(close, 200)
-        ma200 = round_or_none(ma200_series.iloc[-1]) if ma200_series.notna().any() else None
-        rsi14 = round_or_none(rsi(close, 14).iloc[-1])
+        ma200_last = _latest(ma200_series)
+        ma200 = round_or_none(ma200_last)
+        rsi14 = round_or_none(_latest(rsi(close, 14)))
+
         if price and ma50:
-            above50 = price > ma50
+            above50 = bool(price > ma50)
         if price and ma200:
-            above200 = price > ma200
+            above200 = bool(price > ma200)
+        if price and ma200:
+            price_vs_ma200_pct = round_or_none((price / ma200 - 1) * 100)
+        if ma50 and ma200:
+            ma50_vs_ma200_pct = round_or_none((ma50 / ma200 - 1) * 100)
 
-    value_parts = [scale(upside, -20, 40), scale(pe_fwd, 40, 5),
-                   scale(pb, 8, 0.5), scale(div, 0, 8)]
-    quality_parts = [scale(roe, 0, 30), scale(rev_g, 0, 40)]
-    momentum_parts = [scale(ret6m, -30, 40), scale(rsi14, 30, 70),
-                      (100.0 if above50 else 0.0) if above50 is not None else None,
-                      (100.0 if above200 else 0.0) if above200 is not None else None]
+        ma200_valid = ma200_series.dropna()
+        if len(ma200_valid) >= 63:
+            ma200_prev = float(ma200_valid.iloc[-63])
+            ma200_now = float(ma200_valid.iloc[-1])
+            if ma200_prev:
+                ma200_slope_3m_pct = round_or_none((ma200_now / ma200_prev - 1) * 100)
 
-    def avg(parts):
-        vals = [p for p in parts if p is not None]
-        return round(sum(vals) / len(vals), 1) if vals else None
+        if len(high) >= 30 and len(low) >= 30:
+            atr14_raw = _latest(atr(high, low, close))
+            atr14 = round_or_none(atr14_raw)
+            if atr14_raw and price:
+                atr_pct = round_or_none(atr14_raw / price * 100)
 
-    value_s, quality_s, momentum_s = avg(value_parts), avg(quality_parts), avg(momentum_parts)
-    overall = [s for s in (value_s, quality_s, momentum_s) if s is not None]
-    screen_score = round(sum(overall) / len(overall), 1) if overall else None
+        window_52w = close.tail(252) if len(close) >= 252 else close
+        if not window_52w.empty and price:
+            high_52w = float(window_52w.max())
+            if high_52w:
+                prox_52w_high_pct = round_or_none(price / high_52w * 100)
+
+        close_6m = close.tail(126) if len(close) >= 126 else close
+        if not close_6m.empty:
+            roll_max = close_6m.cummax()
+            dd = close_6m / roll_max - 1.0
+            max_dd_6m_pct = round_or_none(float(dd.min()) * 100)
 
     return {
         "symbol": symbol,
         "name": info.get("shortName") or info.get("longName"),
         "price": round_or_none(price),
         "currency": info.get("currency"),
-        "screen_score": screen_score,
-        "value_score": value_s,
-        "quality_score": quality_s,
-        "momentum_score": momentum_s,
-        "signals": {
+        "features": {
             "analyst_upside_pct": round_or_none(upside),
             "pe_forward": round_or_none(pe_fwd),
             "price_to_book": round_or_none(pb),
             "dividend_yield_pct": round_or_none(div),
+            "fcf_yield_pct": round_or_none(fcf_yield),
             "roe_pct": round_or_none(roe),
             "revenue_growth_pct": round_or_none(rev_g),
+            "operating_margin_pct": round_or_none(op_margin),
+            "gross_margin_pct": round_or_none(gross_margin),
+            "recommendation_mean": round_or_none(rec_mean),
+            "analyst_opinions": analyst_n,
+            "short_interest_pct_float": round_or_none(short_pct),
+            "return_3m_pct": ret3m,
             "return_6m_pct": ret6m,
+            "return_12m_pct": ret12m,
             "rsi14": rsi14,
+            "ma20": ma20,
+            "ma50": ma50,
+            "ma200": ma200,
             "above_ma50": above50,
             "above_ma200": above200,
+            "price_vs_ma200_pct": price_vs_ma200_pct,
+            "ma50_vs_ma200_pct": ma50_vs_ma200_pct,
+            "ma200_slope_3m_pct": ma200_slope_3m_pct,
+            "atr14": atr14,
+            "atr_pct_of_price": atr_pct,
+            "proximity_52w_high_pct": prox_52w_high_pct,
+            "max_drawdown_6m_pct": max_dd_6m_pct,
         },
     }
+
+
+def score_candidates(collected_rows):
+    """Score candidates with weighted value/quality/trend/sentiment/risk pillars."""
+    universe = [row.get("features", {}) for row in collected_rows]
+
+    def vals(key):
+        return [f.get(key) for f in universe if f.get(key) is not None]
+
+    pe_vals = vals("pe_forward")
+    pb_vals = vals("price_to_book")
+    div_vals = vals("dividend_yield_pct")
+    fcf_vals = vals("fcf_yield_pct")
+    upside_vals = vals("analyst_upside_pct")
+
+    roe_vals = vals("roe_pct")
+    rev_vals = vals("revenue_growth_pct")
+    opm_vals = vals("operating_margin_pct")
+    gm_vals = vals("gross_margin_pct")
+
+    ret3_vals = vals("return_3m_pct")
+    ret6_vals = vals("return_6m_pct")
+    p200_vals = vals("price_vs_ma200_pct")
+    spread_vals = vals("ma50_vs_ma200_pct")
+    slope_vals = vals("ma200_slope_3m_pct")
+
+    rec_vals = vals("recommendation_mean")
+    short_vals = vals("short_interest_pct_float")
+
+    max_dd_vals = vals("max_drawdown_6m_pct")
+
+    scored = []
+    for row in collected_rows:
+        f = row.get("features", {})
+
+        value_parts = [
+            percentile_score(f.get("analyst_upside_pct"), upside_vals, higher_better=True),
+            percentile_score(f.get("pe_forward"), pe_vals, higher_better=False),
+            percentile_score(f.get("price_to_book"), pb_vals, higher_better=False),
+            percentile_score(f.get("dividend_yield_pct"), div_vals, higher_better=True),
+            percentile_score(f.get("fcf_yield_pct"), fcf_vals, higher_better=True),
+        ]
+        quality_parts = [
+            percentile_score(f.get("roe_pct"), roe_vals, higher_better=True),
+            percentile_score(f.get("revenue_growth_pct"), rev_vals, higher_better=True),
+            percentile_score(f.get("operating_margin_pct"), opm_vals, higher_better=True),
+            percentile_score(f.get("gross_margin_pct"), gm_vals, higher_better=True),
+        ]
+        trend_parts = [
+            percentile_score(f.get("return_3m_pct"), ret3_vals, higher_better=True),
+            percentile_score(f.get("return_6m_pct"), ret6_vals, higher_better=True),
+            percentile_score(f.get("price_vs_ma200_pct"), p200_vals, higher_better=True),
+            percentile_score(f.get("ma50_vs_ma200_pct"), spread_vals, higher_better=True),
+            percentile_score(f.get("ma200_slope_3m_pct"), slope_vals, higher_better=True),
+            sweet_spot_score(f.get("rsi14"), target=57, slope=3),
+            structure_score(row.get("price"), f.get("ma20"), f.get("ma50"), f.get("ma200")),
+            sweet_spot_score(f.get("proximity_52w_high_pct"), target=97, slope=4),
+        ]
+        sentiment_parts = [
+            percentile_score(f.get("recommendation_mean"), rec_vals, higher_better=False),
+            scale(f.get("analyst_opinions"), 0, 30),
+            percentile_score(f.get("short_interest_pct_float"), short_vals, higher_better=False),
+        ]
+        risk_parts = [
+            sweet_spot_score(f.get("atr_pct_of_price"), target=4, slope=15),
+            percentile_score(f.get("max_drawdown_6m_pct"), max_dd_vals, higher_better=True),
+            scale(f.get("return_12m_pct"), -40, 60),
+        ]
+
+        value_s = avg(value_parts)
+        quality_s = avg(quality_parts)
+        trend_s = avg(trend_parts)
+        sentiment_s = avg(sentiment_parts)
+        risk_s = avg(risk_parts)
+
+        weighted_parts = [
+            (value_s, 0.20),
+            (quality_s, 0.20),
+            (trend_s, 0.30),
+            (sentiment_s, 0.20),
+            (risk_s, 0.10),
+        ]
+        weighted_available = [(s, w) for s, w in weighted_parts if s is not None]
+        if weighted_available:
+            weight_sum = sum(w for _, w in weighted_available)
+            raw_score = sum(s * w for s, w in weighted_available) / weight_sum
+        else:
+            raw_score = None
+
+        required_features = [
+            f.get("analyst_upside_pct"), f.get("pe_forward"), f.get("price_to_book"),
+            f.get("roe_pct"), f.get("revenue_growth_pct"), f.get("return_3m_pct"),
+            f.get("return_6m_pct"), f.get("rsi14"), f.get("ma50"), f.get("ma200"),
+            f.get("recommendation_mean"), f.get("short_interest_pct_float"),
+            f.get("atr_pct_of_price"),
+        ]
+        present = sum(1 for x in required_features if x is not None)
+        coverage_ratio = present / len(required_features) if required_features else 0.0
+        confidence_multiplier = 0.7 + 0.3 * coverage_ratio
+        screen_score = round(raw_score * confidence_multiplier, 1) if raw_score is not None else None
+
+        row.update({
+            "screen_score": screen_score,
+            "raw_screen_score": round_or_none(raw_score),
+            "confidence_score": round_or_none(coverage_ratio * 100),
+            "value_score": value_s,
+            "quality_score": quality_s,
+            "trend_score": trend_s,
+            "momentum_score": trend_s,
+            "sentiment_score": sentiment_s,
+            "risk_score": risk_s,
+            "signals": {
+                "analyst_upside_pct": f.get("analyst_upside_pct"),
+                "pe_forward": f.get("pe_forward"),
+                "price_to_book": f.get("price_to_book"),
+                "dividend_yield_pct": f.get("dividend_yield_pct"),
+                "fcf_yield_pct": f.get("fcf_yield_pct"),
+                "roe_pct": f.get("roe_pct"),
+                "revenue_growth_pct": f.get("revenue_growth_pct"),
+                "operating_margin_pct": f.get("operating_margin_pct"),
+                "gross_margin_pct": f.get("gross_margin_pct"),
+                "recommendation_mean": f.get("recommendation_mean"),
+                "analyst_opinions": f.get("analyst_opinions"),
+                "short_interest_pct_float": f.get("short_interest_pct_float"),
+                "return_3m_pct": f.get("return_3m_pct"),
+                "return_6m_pct": f.get("return_6m_pct"),
+                "return_12m_pct": f.get("return_12m_pct"),
+                "rsi14": f.get("rsi14"),
+                "above_ma50": f.get("above_ma50"),
+                "above_ma200": f.get("above_ma200"),
+                "price_vs_ma200_pct": f.get("price_vs_ma200_pct"),
+                "ma50_vs_ma200_pct": f.get("ma50_vs_ma200_pct"),
+                "ma200_slope_3m_pct": f.get("ma200_slope_3m_pct"),
+                "atr14": f.get("atr14"),
+                "atr_pct_of_price": f.get("atr_pct_of_price"),
+                "proximity_52w_high_pct": f.get("proximity_52w_high_pct"),
+                "max_drawdown_6m_pct": f.get("max_drawdown_6m_pct"),
+            },
+            "data_quality": {
+                "coverage_ratio": round_or_none(coverage_ratio),
+                "coverage_pct": round_or_none(coverage_ratio * 100),
+            },
+        })
+        row.pop("features", None)
+        scored.append(row)
+
+    return scored
 
 
 def load_universe(args):
@@ -156,9 +410,11 @@ def main():
     rows = []
     for sym in universe:
         try:
-            rows.append(screen_one(sym))
+            rows.append(collect_features(sym))
         except Exception as exc:
             rows.append({"symbol": sym, "error": str(exc), "screen_score": None})
+
+    rows = score_candidates(rows)
 
     ranked = sorted(rows, key=lambda r: (r.get("screen_score") is not None,
                                          r.get("screen_score") or 0), reverse=True)
@@ -170,9 +426,10 @@ def main():
     emit({
         "universe_size": len(universe),
         "ranked": ranked,
-        "method": "screen_score = mean(value, quality, momentum), each 0-100, None-tolerant. "
-                  "Value=upside+low fwd P/E+low P/B+yield; Quality=ROE+revenue growth; "
-                  "Momentum=6m return+RSI+price>MA50/MA200.",
+        "method": "screen_score = weighted(value 20% + quality 20% + trend 30% + "
+                  "sentiment 20% + risk 10%), all 0-100 and percentile-normalized within "
+                  "the screened universe, then confidence-adjusted by data coverage. "
+                  "Momentum_score is kept as a backward-compatible alias of trend_score.",
         "next_step": "Take the top names into data-scout / the analyst-desk for a full work-up. "
                      "Screen score is a coarse filter, NOT a buy signal.",
         "disclaimer": "Educational screen, not financial advice. yfinance fields can be missing "
