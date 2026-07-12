@@ -18,10 +18,26 @@ from lib.common import (  # noqa: E402
     atr, emit, get_ticker, history, last_price, round_or_none, rsi, safe_info, sma,
 )
 
+WATCHLIST_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "watchlists"
+)
+
+
+def _read_watchlist(filename: str) -> list[str]:
+    """Return upper-cased tickers from watchlists/<filename>, skipping blanks and # comments."""
+    path = os.path.join(WATCHLIST_DIR, filename)
+    tickers: list[str] = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            ticker = line.split("#")[0].strip().upper()
+            if ticker:
+                tickers.append(ticker)
+    return tickers
+
+
 PRESETS = {
-    "wse_blue": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
-                 "MBR.WA", "SNT.WA","ASB.WA"],
-    "us_mega": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "TSLA", "MU"],
+    "wse_blue": _read_watchlist("wse_blue.txt"),
+    "us_mega": _read_watchlist("us_mega.txt") + _read_watchlist("us100.txt"),
     "current_portfolio": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
                           "MBR.WA", "SNT.WA", "ASB.WA", "NVDA", "AVGO", "MU"],
 }
@@ -403,11 +419,14 @@ def main():
     if not universe:
         raise SystemExit("No tickers. Pass symbols, --preset, or --universe.")
 
+    total = len(universe)
     rows = []
-    for sym in universe:
+    for idx, sym in enumerate(universe, start=1):
+        print(f"[{idx}/{total}] reviewing {sym}...", file=sys.stderr, flush=True)
         try:
             rows.append(collect_features(sym))
         except Exception as exc:
+            print(f"[{idx}/{total}] {sym} failed: {exc}", file=sys.stderr, flush=True)
             rows.append({"symbol": sym, "error": str(exc), "screen_score": None})
 
     rows = score_candidates(rows)
