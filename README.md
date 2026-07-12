@@ -98,6 +98,11 @@ python scripts/screen_candidates.py --preset us_mega --top 15 > screen_us.json
 python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen_us.json --top 8 > alloc_us.json
 python scripts/view_results.py --screen-file screen_us.json --allocation-file alloc_us.json --top 10 --out-md output/dashboard.md
 
+# ALL flow: screen -> allocate -> review
+python scripts/screen_candidates.py --preset all --top 15 > screen_us.json
+python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen_all.json --top 8 > alloc_all.json
+python scripts/view_results.py --screen-file screen_all.json --allocation-file alloc_all.json --top 10 --out-md output/dashboard.md
+
 # Current portfolio flow: screen -> allocate -> review
 python scripts/screen_candidates.py --preset current_portfolio --top 12 > screen_current_portfolio.json
 python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen_current_portfolio.json --top 8 > alloc_current_portfolio.json
