@@ -26,7 +26,7 @@ PCO.WA       # Pepco
 MDV.WA       # Modivo (formerly CCC)
 
 # ── mWIG40 (40 mid-caps) ──────────────────────────────────────────────────────
-AB.WA        # AB SA (electronics distribution)
+ABE.WA        # AB SA (electronics distribution)
 EAT.WA       # AmRest Holdings
 ACP.WA       # Asseco Poland
 DOM.WA       # Dom Development
