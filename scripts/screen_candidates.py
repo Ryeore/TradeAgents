@@ -41,6 +41,8 @@ PRESETS = {
     "all": _read_watchlist("wse_blue.txt") + _read_watchlist("us100.txt"),
     "current_portfolio": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
                           "MBR.WA", "SNT.WA", "ASB.WA", "NVDA", "AVGO", "MU"],
+    "current_pl": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
+                          "MBR.WA", "SNT.WA", "ASB.WA"]
 }
 
 

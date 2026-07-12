@@ -89,12 +89,12 @@ Typical sample workflows:
 
 ```powershell
 # WSE flow: screen -> allocate -> review
-python scripts/screen_candidates.py --preset wse_blue --top 12 > screen_wse.json
+python scripts/screen_candidates.py --preset wse --top 12 > screen_wse.json
 python scripts/portfolio_allocator.py --budget 5000 --candidates-file screen_wse.json --top 6 > alloc_wse.json
 python scripts/view_results.py --screen-file screen_wse.json --allocation-file alloc_wse.json --top 10 --out-md output/dashboard.md
 
 # US flow: screen -> allocate -> review
-python scripts/screen_candidates.py --preset us_mega --top 15 > screen_us.json
+python scripts/screen_candidates.py --preset us100 --top 15 > screen_us.json
 python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen_us.json --top 8 > alloc_us.json
 python scripts/view_results.py --screen-file screen_us.json --allocation-file alloc_us.json --top 10 --out-md output/dashboard.md
 
