@@ -36,8 +36,9 @@ def _read_watchlist(filename: str) -> list[str]:
 
 
 PRESETS = {
-    "wse_blue": _read_watchlist("wse_blue.txt"),
-    "us_mega": _read_watchlist("us_mega.txt") + _read_watchlist("us100.txt"),
+    "wse": _read_watchlist("wse_blue.txt"),
+    "us100": _read_watchlist("us100.txt"),
+    "all": _read_watchlist("wse_blue.txt") + _read_watchlist("us100.txt"),
     "current_portfolio": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
                           "MBR.WA", "SNT.WA", "ASB.WA", "NVDA", "AVGO", "MU"],
 }
