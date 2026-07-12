@@ -14,7 +14,7 @@ Optional knobs:
     --max-pos-pct 12       hard cap on position as % of account (default 12)
     --atr-stop-mult 2.0    stop distance = mult * ATR (default 2.0)
     --tranches 3           number of DCA buys (default 3)
-    --tranche-step-atr 1.0 spacing between tranches in ATRs (default 1.0)
+    --tranche-step-atr 0.5 spacing between tranches in ATRs (default 0.5)
     --t1-r 2.0 --t2-r 4.0  profit targets in R multiples (default 2R / 4R)
 """
 import argparse
@@ -35,7 +35,7 @@ def main() -> None:
     p.add_argument("--max-pos-pct", type=float, default=12.0)
     p.add_argument("--atr-stop-mult", type=float, default=2.0)
     p.add_argument("--tranches", type=int, default=3)
-    p.add_argument("--tranche-step-atr", type=float, default=1.0)
+    p.add_argument("--tranche-step-atr", type=float, default=0.5)
     p.add_argument("--t1-r", type=float, default=2.0)
     p.add_argument("--t2-r", type=float, default=4.0)
     args = p.parse_args()
@@ -68,13 +68,27 @@ def main() -> None:
 
     # --- DCA tranches (scale-in below current price) --------------------- #
     n = max(1, args.tranches)
+    # Safety clamp: never let the deepest tranche sit at/through the stop.
+    # Keep the lowest tranche within `deepest_frac` of the stop distance so
+    # there is a volatility buffer before the stop triggers.
+    deepest_frac = 0.75
+    step_atr = args.tranche_step_atr
+    tranche_spacing_note = None
+    if n > 1 and step_atr > 0:
+        max_depth_atr = deepest_frac * args.atr_stop_mult
+        if (n - 1) * step_atr > max_depth_atr:
+            step_atr = max_depth_atr / (n - 1)
+            tranche_spacing_note = (
+                f"tranche spacing compressed from {args.tranche_step_atr} to "
+                f"{round(step_atr, 3)} ATR so the deepest tranche stays above the stop"
+            )
     # Weight earlier tranches lighter, later (cheaper) tranches heavier.
     raw_weights = [1 + i for i in range(n)]  # 1,2,3...
     wsum = sum(raw_weights)
     tranches = []
     allocated = 0
     for i in range(n):
-        entry = round(price - i * args.tranche_step_atr * atr, 2)
+        entry = round(price - i * step_atr * atr, 2)
         w = raw_weights[i] / wsum
         t_shares = int(round(shares * w))
         if i == n - 1:  # last tranche absorbs rounding remainder
@@ -92,7 +106,7 @@ def main() -> None:
     target1 = round(price + args.t1_r * r_per_share, 2)
     target2 = round(price + args.t2_r * r_per_share, 2)
 
-    emit({
+    payload = {
         "inputs": {
             "price": price, "atr": atr, "conviction": conv, "account": acct,
             "risk_pct": args.risk_pct, "max_pos_pct": args.max_pos_pct,
@@ -123,7 +137,10 @@ def main() -> None:
         "note": "Size is the MIN of risk-based and conviction-capped shares so a stop-out "
                 "never exceeds your risk budget. Tranche prices are limit orders; cancel "
                 "lower tranches if the thesis breaks.",
-    })
+    }
+    if tranche_spacing_note:
+        payload["dca_note"] = tranche_spacing_note
+    emit(payload)
 
 
 if __name__ == "__main__":

@@ -127,9 +127,13 @@ def derive_allocation_score(
     if base is None:
         return None, "none"
 
-    if apply_confidence:
+    # Confidence is applied ONLY to freshly-built component scores. A legacy
+    # screen_score is already confidence-adjusted by screen_candidates.py, and a
+    # user-supplied score/conviction has no data-coverage meaning -- multiplying
+    # either by the confidence factor here would double-penalize.
+    if apply_confidence and component_base is not None:
         mult = confidence_multiplier(candidate.get("confidence_score"), floor=confidence_floor)
-        return float(base) * mult, "components+confidence" if component_base is not None else "legacy+confidence"
+        return float(base) * mult, "components+confidence"
 
     return float(base), "components" if component_base is not None else "legacy"
 
