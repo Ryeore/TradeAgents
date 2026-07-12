@@ -63,8 +63,8 @@ APR.WA       # Auto Partner
 CBF.WA       # Cyber_Folks
 TEN.WA       # Ten Square Games
 VRC.WA       # Vercom
-CRO.WA       # Creotech Instruments
-PRG.WA       # Pracuj Group
+CRI.WA       # Creotech Instruments
+GPP.WA       # Pracuj Group
 DIA.WA       # Diagnostyka
 
 # ── sWIG80 (80 small-caps) ────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ MCI.WA       # MCI Capital
 MNC.WA       # Mennica Polska
 MSZ.WA       # Mostostal Zabrze
 SNK.WA       # Sanok Rubber Company
-FVK.WA       # Śnieżka (Fabryka Farb i Lakierów)
+SKA.WA       # Śnieżka (Fabryka Farb i Lakierów)
 STA.WA       # Stalexport Autostrady
 STP.WA       # Stalprodukt
 SGN.WA       # Sygnity
@@ -98,7 +98,7 @@ ABS.WA       # Asseco Business Solutions
 CIG.WA       # CI Games
 WLT.WA       # Wielton
 UNI.WA       # Unibep
-SLF.WA       # Selena FM
+SEL.WA       # Selena FM
 ZRE.WA       # Zremb
 QRS.WA       # Quercus TFI
 ATR.WA       # Atrem
@@ -108,34 +108,34 @@ LWB.WA       # Bogdanka (LW Bogdanka)
 ATC.WA       # Arctic Paper
 FRO.WA       # Ferro
 11B.WA       # 11 bit studios
-DNT.WA       # Digitanet
-VTM.WA       # Votum
+DIG.WA       # Digital Network
+VOT.WA       # Votum
 BLO.WA       # Bloober Team
 RVU.WA       # Ryvu Therapeutics
 ACG.WA       # AC SA (autogaz)
 TOA.WA       # Toya
 ALL.WA       # Ailleron
-MGM.WA       # Medicalgorithmics
-DWK.WA       # DataWalk
+MDG.WA       # Medicalgorithmics
+DAT.WA       # DataWalk
 UNT.WA       # Unimot
 ZEP.WA       # ZE PAK
 TAR.WA       # Tarczyński
 MLP.WA       # MLP Group
 MRC.WA       # Mercator Medical
 PCR.WA       # PCC Rokita
-TRP.WA       # Torpol
+TOR.WA       # Torpol
 VGP.WA       # Vigo Photonics
-ATL.WA       # Atal
-WIT.WA       # Wittchen
+1AT.WA       # Atal
+WTN.WA       # Wittchen
 ENT.WA       # Enter Air
 ARH.WA       # Archicom
-CEL.WA       # Celon Pharma
+CLN.WA       # Celon Pharma
 PLW.WA       # PlayWay
 CRJ.WA       # Creepy Jar
-MDN.WA       # Medinice
+ICE.WA       # Medinice
 SLV.WA       # Selvita
 DAD.WA       # Dadelo
-AWR.WA       # Answear
+ANR.WA       # Answear
 HUG.WA       # Huuuge
 CTX.WA       # CapTor Rx
 SHO.WA       # Shoper
@@ -143,6 +143,6 @@ OND.WA       # ONDE
 BCX.WA       # Bioceltix
 GRX.WA       # GreenX Metals
 SCW.WA       # Scanway
-MRP.WA       # Murapol
-ARN.WA       # Arlen
+MUR.WA       # Murapol
+ARL.WA       # Arlen
 CRQ.WA       # CR Quantum
