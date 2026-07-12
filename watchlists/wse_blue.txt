@@ -47,7 +47,7 @@ CPS.WA       # Cyfrowy Polsat
 ATT.WA       # Grupa Azoty
 ENA.WA       # Enea
 MRB.WA       # Mirbud
-ASEE.WA      # Asseco South Eastern Europe
+ASE.WA       # Asseco South Eastern Europe
 MBR.WA       # Mo-Bruk
 GPW.WA       # Giełda Papierów Wartościowych (Warsaw Stock Exchange)
 BFT.WA       # Benefit Systems
@@ -103,7 +103,7 @@ ZRE.WA       # Zremb
 QRS.WA       # Quercus TFI
 ATR.WA       # Atrem
 BMC.WA       # Bumech
-CGN.WA       # Cognor
+COG.WA       # Cognor
 LWB.WA       # Bogdanka (LW Bogdanka)
 ATC.WA       # Arctic Paper
 FRO.WA       # Ferro
@@ -124,7 +124,7 @@ MLP.WA       # MLP Group
 MRC.WA       # Mercator Medical
 PCR.WA       # PCC Rokita
 TOR.WA       # Torpol
-VGP.WA       # Vigo Photonics
+VGO.WA       # Vigo Photonics
 1AT.WA       # Atal
 WTN.WA       # Wittchen
 ENT.WA       # Enter Air
