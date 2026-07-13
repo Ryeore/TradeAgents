@@ -1,0 +1,42 @@
+[
+  {
+    "Account": "XTB",
+    "Ticker": "XTB.WA",
+    "Name": "Xtb SA",
+    "Currency": "PLN",
+    "Quantity": 87.00,
+    "AveragePurchasePricePLN": 90.67,
+    "CostPLN": 7888.12,
+    "CurrentValuePLN": 11055.96
+  },
+  {
+    "Account": "XTB",
+    "Ticker": "KRU.WA",
+    "Name": "Kruk SA",
+    "Currency": "PLN",
+    "Quantity": 22.00,
+    "AveragePurchasePricePLN": 444.10,
+    "CostPLN": 9770.30,
+    "CurrentValuePLN": 8995.80
+  },
+  {
+    "Account": "XTBUSD",
+    "Ticker": "AVGO",
+    "Name": "Broadcom Inc",
+    "Currency": "USD",
+    "Quantity": 3.00,
+    "AveragePurchasePricePLN": 394.56,
+    "CostPLN": 4343.75,
+    "CurrentValuePLN": 4562.66
+  },
+  {
+    "Account": "XTBUSD",
+    "Ticker": "MU",
+    "Name": "Micron Technology Inc",
+    "Currency": "USD",
+    "Quantity": 1.00,
+    "AveragePurchasePricePLN": 924.92,
+    "CostPLN": 3472.15,
+    "CurrentValuePLN": 3723.79
+  }
+]
