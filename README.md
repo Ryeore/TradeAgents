@@ -316,46 +316,90 @@ How to read the portfolio allocation output:
 
 Example interpretation of a sample row:
 
+**Screener row** — `screen_current_portfolio.json`, top-ranked candidate
+(`ranked[0]`; `signals` trimmed to a few per pillar — see the full field list above):
+
 ```json
 {
-  "budget": 5000.0,
-  "params": {
-    "budget_currency": "PLN",
-    "fx_usdpln": 3.78345,
-    "max_weight_pct": 35.0,
-    "min_score": 0.0,
-    "top": 10,
-    "score_power": 1.5,
-    "cash_reserve_pct": 0.0,
-    "leftover_sweep": true
+  "symbol": "MU",
+  "name": "Micron Technology, Inc.",
+  "price": 979.3,
+  "currency": "USD",
+  "screen_score": 69.2,
+  "raw_screen_score": 69.19,
+  "confidence_score": 100.0,
+  "value_score": 62.0,
+  "quality_score": 78.5,
+  "trend_score": 81.7,
+  "momentum_score": 81.7,
+  "sentiment_score": 59.7,
+  "risk_score": 46.4,
+  "signals": {
+    "analyst_upside_pct": 51.74,
+    "pe_forward": 6.54,
+    "roe_pct": 66.64,
+    "revenue_growth_pct": 345.7,
+    "return_6m_pct": 199.46,
+    "price_vs_ma200_pct": 110.84,
+    "rsi14": 49.12,
+    "recommendation_mean": 1.42,
+    "atr_pct_of_price": 8.89,
+    "return_12m_pct": 695.47
   },
-  "allocations": [
-    {
-      "symbol": "XTB.WA",
-      "currency": "PLN",
-      "price": 123.08,
-      "price_pln": 123.08,
-      "allocation_score": 76.6,
-      "allocation_score_source": "components+confidence",
-      "score": 76.6,
-      "target_weight_pct": 12.42,
-      "shares": 14,
-      "cost": 1723.12,
-      "cost_pln": 1723.12,
-      "actual_weight_pct": 34.46
-    }
-  ]
+  "data_quality": { "coverage_ratio": 1.0, "coverage_pct": 100.0 }
 }
 ```
 
-In this example, your total budget is `5000 PLN`. The model first computes
-target weights from allocation scores (`score_power=1.5`), then applies the 35% cap and
-whole-share rounding. For `XTB.WA`, buying `14` shares at `123.08 PLN` spends
-`1723.12 PLN`, which is `34.46%` of the full budget.
+`MU` tops this 12-name universe with `screen_score = 69.2`. Because all 13 key
+inputs are present (`confidence_score = 100`), the confidence multiplier is `1.0`,
+so `screen_score` equals `raw_screen_score` (69.19). The rank is driven by strong
+**quality** (78.5 — ROE 66.6%, revenue growth 345.7%) and **trend** (81.7 — price
+110.8% above its 200-day MA), with a cheap forward P/E (6.54) and 51.7% analyst
+upside lifting **value** (62.0). The **risk** pillar lags (46.4) because volatility
+is high (ATR ≈ 8.9% of price, +695% over 12 months). A high screen score is a cue
+to research further, not a buy.
 
-If a row were a US stock, `currency` would be `USD`, `price` would be in USD,
-and `price_pln` would equal `price * fx_usdpln`; sizing and `cost_pln` are
-always computed in PLN.
+**Allocation row** — `alloc_current_portfolio.json`, top holding (`allocations[0]`)
+for a `2000 PLN` budget:
+
+```json
+{
+  "symbol": "ASB.WA",
+  "currency": "PLN",
+  "price": 114.1,
+  "price_pln": 114.1,
+  "allocation_score": 56.3,
+  "allocation_score_source": "components+confidence",
+  "score": 56.3,
+  "screen_score": 56.3,
+  "conviction": null,
+  "confidence_score": 92.31,
+  "value_score": 24.8,
+  "quality_score": 33.1,
+  "trend_score": 85.4,
+  "sentiment_score": 52.9,
+  "risk_score": 98.5,
+  "target_weight_pct": 12.04,
+  "shares": 6,
+  "cost": 684.6,
+  "cost_pln": 684.6,
+  "actual_weight_pct": 34.23
+}
+```
+
+`ASB.WA` gets an `allocation_score` of `56.3` from the confidence-adjusted component
+blend (`allocation_score_source = "components+confidence"`). Its model
+`target_weight_pct` is only `12.04%`, but after whole-share rounding and the
+leftover-cash sweep it lands at `6` shares × `114.1 PLN` = `684.6 PLN`, i.e. an
+`actual_weight_pct` of `34.23%` — right under the 35% per-name cap. That gap between
+target (12%) and actual (34%) is the sweep concentrating unspent budget into the
+top affordable names. `currency` is `PLN`, so `price_pln` equals `price`.
+
+Note how the two files connect: `MU` wins the *screen* (69.2) yet never makes the
+*allocation* — it sits in `summary.dropped_below_one_share`, because a single share
+(≈ $979 × 3.7847 ≈ 3706 PLN) blows past the 700 PLN per-name cap (35% of 2000 PLN).
+For a US row, `currency` is `USD`, `price` is in USD, and `price_pln` equals
+`price × fx_usdpln`; sizing and `cost_pln` are always computed in PLN.
 
 Start with `allocations` if you want the actionable result. `target_weight_pct`
 shows the model's ideal weighting before whole-share rounding, while
