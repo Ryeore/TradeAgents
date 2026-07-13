@@ -48,6 +48,41 @@ def read_json_file(path: str) -> object:
     raise ValueError(f"Unsupported JSON encoding or invalid JSON: {path}")
 
 
+def normalize_holdings(obj) -> list[dict]:
+    """Coerce various holdings shapes into a [{symbol, value}] list.
+
+    Accepts:
+      * [{"symbol", "value"}]                                    (native)
+      * [{"Ticker", "CurrentValuePLN", ...}]                     (portfolio.json schema)
+      * {"symbol": [...], "value": [...]}                        (columnar / PowerShell ConvertTo-Json)
+    """
+    if obj is None:
+        return []
+
+    # Columnar dict: {"symbol": [...], "value": [...]}
+    if isinstance(obj, dict):
+        syms = obj.get("symbol") or obj.get("Ticker")
+        vals = obj.get("value") or obj.get("CurrentValuePLN")
+        if isinstance(syms, list) and isinstance(vals, list):
+            return [
+                {"symbol": s, "value": v}
+                for s, v in zip(syms, vals)
+            ]
+        # Single-row dict.
+        obj = [obj]
+
+    out: list[dict] = []
+    for row in obj or []:
+        if not isinstance(row, dict):
+            continue
+        symbol = row.get("symbol", row.get("Ticker"))
+        value = row.get("value", row.get("CurrentValuePLN"))
+        if symbol is None:
+            continue
+        out.append({"symbol": symbol, "value": value})
+    return out
+
+
 def load_candidates(obj) -> list[dict]:
     """Accept either a bare candidate list or a screen_candidates.py payload."""
     rows = obj.get("ranked", obj) if isinstance(obj, dict) else obj
@@ -426,7 +461,7 @@ def main() -> None:
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--candidates-file", help="JSON file: candidate list or screener output")
     src.add_argument("--candidates-json", help="JSON string: candidate list or screener output")
-    p.add_argument("--holdings-file", help="JSON file: [{symbol, value}] existing holdings")
+    p.add_argument("--holdings-file", help="JSON file: existing holdings as [{symbol, value}] or portfolio.json schema [{Ticker, CurrentValuePLN}]")
     p.add_argument("--max-weight", type=float, default=0.35, help="Max weight per name (0-1)")
     p.add_argument("--min-score", type=float, default=0.0, help="Drop candidates below this score")
     p.add_argument("--top", type=int, default=0, help="Keep only the top N candidates")
@@ -466,7 +501,7 @@ def main() -> None:
 
     holdings = None
     if args.holdings_file:
-        holdings = read_json_file(args.holdings_file)
+        holdings = normalize_holdings(read_json_file(args.holdings_file))
 
     emit(allocate(
         args.budget, candidates, max_weight=args.max_weight, min_score=args.min_score,
