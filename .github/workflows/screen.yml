@@ -20,7 +20,7 @@ on:
         type: string
         default: ""
       horizon:
-        description: "Investing horizon (re-weights the scoring pillars)"
+        description: "Investing horizon (re-weights the scoring pillars) - short = 1-3 m, medium = 1-5 y, long = 10-15 y"
         type: choice
         default: medium
         options:
@@ -36,7 +36,7 @@ on:
         type: number
         default: 0
       budget:
-        description: "Cash budget to allocate across the shortlist (0 = skip allocation)"
+        description: "Cash budget to allocate across the shortlist in PLN (0 = skip allocation)"
         type: number
         default: 0
       alloc_top:
