@@ -48,6 +48,21 @@ PRESETS = {
 
 # (Removed TEMP_PRESETS; rely on git history or add a real preset name instead of keeping commented-out lists.)
 
+# Exponential missing-data penalty: each absent required input multiplies the
+# screen score by MISSING_DATA_DECAY, so gaps compound. Tuned so a row missing
+# all 13 required inputs keeps ~15% of its raw score (0.86 ** 13 ≈ 0.14).
+MISSING_DATA_DECAY = 0.86
+
+# Investing-horizon pillar weightings (value, quality, trend, sentiment, risk;
+# each row sums to 1.0). Longer horizons lean on quality/value and de-emphasize
+# short-term trend/sentiment; shorter horizons do the opposite.
+HORIZON_WEIGHTS = {
+    "short":  {"value": 0.10, "quality": 0.10, "trend": 0.45, "sentiment": 0.25, "risk": 0.10},
+    "medium": {"value": 0.20, "quality": 0.20, "trend": 0.30, "sentiment": 0.20, "risk": 0.10},
+    "long":   {"value": 0.30, "quality": 0.40, "trend": 0.05, "sentiment": 0.10, "risk": 0.15},
+}
+DEFAULT_HORIZON = "long"
+
 
 def clamp(x, lo=0.0, hi=100.0):
     return max(lo, min(hi, x))
@@ -245,8 +260,9 @@ def collect_features(symbol):
     }
 
 
-def score_candidates(collected_rows):
-    """Score candidates with weighted value/quality/trend/sentiment/risk pillars."""
+def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
+    """Score candidates with horizon-weighted value/quality/trend/sentiment/risk pillars."""
+    hw = HORIZON_WEIGHTS.get(horizon, HORIZON_WEIGHTS[DEFAULT_HORIZON])
     universe = [row.get("features", {}) for row in collected_rows]
 
     def vals(key):
@@ -319,11 +335,11 @@ def score_candidates(collected_rows):
         risk_s = avg(risk_parts)
 
         weighted_parts = [
-            (value_s, 0.20),
-            (quality_s, 0.20),
-            (trend_s, 0.30),
-            (sentiment_s, 0.20),
-            (risk_s, 0.10),
+            (value_s, hw["value"]),
+            (quality_s, hw["quality"]),
+            (trend_s, hw["trend"]),
+            (sentiment_s, hw["sentiment"]),
+            (risk_s, hw["risk"]),
         ]
         weighted_available = [(s, w) for s, w in weighted_parts if s is not None]
         if weighted_available:
@@ -340,8 +356,12 @@ def score_candidates(collected_rows):
             f.get("atr_pct_of_price"),
         ]
         present = sum(1 for x in required_features if x is not None)
+        missing = len(required_features) - present
         coverage_ratio = present / len(required_features) if required_features else 0.0
-        confidence_multiplier = 0.7 + 0.3 * coverage_ratio
+        # Exponential missing-data penalty: each absent input compounds the
+        # penalty (score *= MISSING_DATA_DECAY per gap), so sparse-data names
+        # decay steeply. Full coverage leaves the score untouched.
+        confidence_multiplier = MISSING_DATA_DECAY ** missing
         screen_score = round(raw_score * confidence_multiplier, 1) if raw_score is not None else None
 
         row.update({
@@ -416,6 +436,10 @@ def main():
     p.add_argument("--universe", help="Path to a file with one ticker per line")
     p.add_argument("--top", type=int, default=0, help="Keep only the top N (0 = all)")
     p.add_argument("--min-score", type=float, default=0.0, help="Drop below this score")
+    p.add_argument("--horizon", choices=sorted(HORIZON_WEIGHTS), default=DEFAULT_HORIZON,
+                   help="Investing horizon: short (weeks-months), medium (~1-5y), or "
+                        "long (~10-15y). Re-weights the scoring pillars (long favors "
+                        "quality/value, short favors trend/sentiment).")
     args = p.parse_args()
 
     universe = load_universe(args)
@@ -432,7 +456,7 @@ def main():
             print(f"[{idx}/{total}] {sym} failed: {exc}", file=sys.stderr, flush=True)
             rows.append({"symbol": sym, "error": str(exc), "screen_score": None})
 
-    rows = score_candidates(rows)
+    rows = score_candidates(rows, horizon=args.horizon)
 
     ranked = sorted(rows, key=lambda r: (r.get("screen_score") is not None,
                                          r.get("screen_score") or 0), reverse=True)
@@ -441,13 +465,18 @@ def main():
     if args.top:
         ranked = ranked[:args.top]
 
+    hw = HORIZON_WEIGHTS[args.horizon]
     emit({
         "universe_size": len(universe),
+        "horizon": args.horizon,
+        "pillar_weights": {k: round(v, 2) for k, v in hw.items()},
         "ranked": ranked,
-        "method": "screen_score = weighted(value 20% + quality 20% + trend 30% + "
-                  "sentiment 20% + risk 10%), all 0-100 and percentile-normalized within "
-                  "the screened universe, then confidence-adjusted by data coverage. "
-                  "Momentum_score is kept as a backward-compatible alias of trend_score.",
+        "method": (f"screen_score = weighted(value {hw['value']:.0%} + quality {hw['quality']:.0%} + "
+                   f"trend {hw['trend']:.0%} + sentiment {hw['sentiment']:.0%} + risk {hw['risk']:.0%}) "
+                   f"for horizon '{args.horizon}', all 0-100 and percentile-normalized within the "
+                   "screened universe, then confidence-adjusted by data coverage (exponential penalty: "
+                   "multiplier = 0.86 ** missing_inputs, so each missing field compounds the "
+                   "punishment). Momentum_score is a backward-compatible alias of trend_score."),
         "next_step": "Take the top names into data-scout / the analyst-desk for a full work-up. "
                      "Screen score is a coarse filter, NOT a buy signal.",
         "disclaimer": "Educational screen, not financial advice. yfinance fields can be missing "
