@@ -55,6 +55,9 @@ WSE names require the `.WA` suffix, for example `CDR.WA` or `KRU.WA`.
 
 ```powershell
 python scripts/screen_candidates.py --preset wse_blue --top 8 > screen.json
+
+# Long-term (buy-and-hold ~10-15y) weighting: favors quality + value, ignores short-term trend
+python scripts/screen_candidates.py --preset wse_blue --top 8 --horizon long > screen.json
 ```
 
 ### Allocate a budget across the shortlist
@@ -69,6 +72,30 @@ python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen.jso
 python scripts/view_results.py --screen-file screen.json --top 10
 python scripts/view_results.py --screen-file screen.json --allocation-file alloc.json --top 10 --out-md output/dashboard.md
 ```
+
+### Run it from the browser (GitHub Actions)
+
+The whole screen → allocate → dashboard flow can be triggered from the GitHub
+web UI, no local setup required. In the repo, open **Actions → "Stock Screen" →
+Run workflow**, fill in the parameter boxes, and run:
+
+| Input | Meaning |
+|---|---|
+| `preset` | Watchlist to screen (`wse`, `us100`, `all`, `current_portfolio`, `current_pl`). |
+| `tickers` | Your own portfolio / custom list (tickers only) that overrides the preset. Separate with spaces, commas or new lines, e.g. `PKO.WA, KRU.WA, NVDA`. |
+| `horizon` | Pillar weighting: `short`, `medium`, or `long` (~10–15y). |
+| `top` | Keep only the top N screened names. |
+| `min_score` | Drop names below this score. |
+| `budget` | Cash to allocate across the shortlist; `0` skips allocation. |
+| `alloc_top` | Allocate across the top N names (used when `budget > 0`). |
+| `max_weight` | Max weight per name for allocation (0–1). |
+
+Results appear in the run's **Summary** (rendered dashboard) and as downloadable
+**Artifacts** (`screen.json`, `alloc.json`, `output/dashboard.md`). The workflow
+lives in [.github/workflows/screen.yml](.github/workflows/screen.yml).
+
+> yfinance runs from GitHub's US cloud IPs, so thin WSE small-caps may return
+> more `null` fields (and thus lower confidence-adjusted scores) than a local run.
 
 ---
 
@@ -145,6 +172,8 @@ automatic buy. Every field the screener emits is described below.
 |---|---|
 | `universe_size` | Number of tickers screened in this run. |
 | `ranked` | Ordered candidate list, best `screen_score` first. |
+| `horizon` | Investing horizon used for pillar weighting (`short` / `medium` / `long`). |
+| `pillar_weights` | The value/quality/trend/sentiment/risk weights applied for that horizon. |
 | `method` | One-line summary of the scoring formula and pillar weights. |
 | `next_step` | Reminder that the screen is a coarse filter, not a buy signal. |
 | `disclaimer` | Educational-use and data-coverage caveat. |
@@ -252,13 +281,24 @@ SMAs it uses are computed internally and are **not** emitted in `signals`; the
 
 **How `screen_score` is calculated**
 
-1. Build the 5 pillar scores (each the average of its 0–100 sub-scores):
-   Value (20%), Quality (20%), Trend (30%), Sentiment (20%), Risk (10%).
+1. Build the 5 pillar scores (each the average of its 0–100 sub-scores). The
+   pillar weights depend on the `--horizon` flag (default `medium`):
+
+   | Horizon | Value | Quality | Trend | Sentiment | Risk |
+   |---|---|---|---|---|---|
+   | `short` (weeks–months) | 10% | 10% | 45% | 25% | 10% |
+   | `medium` (~1–5y, default) | 20% | 20% | 30% | 20% | 10% |
+   | `long` (~10–15y) | 30% | 40% | 5% | 10% | 15% |
+
+   A longer horizon leans on quality and value and largely ignores short-term
+   trend; a shorter horizon does the opposite.
 2. `raw_screen_score` = weight-normalized blend of the available pillars.
-3. `confidence_score` = % of the 13 key inputs present, giving
-   `confidence_multiplier = 0.7 + 0.3 × coverage`.
+3. `confidence_score` = % of the 13 key inputs present. The confidence
+   multiplier decays exponentially with each **missing** input:
+   `confidence_multiplier = 0.86 ** missing_inputs` (≈ 1.0 at full coverage,
+   ≈ 0.14 when all 13 are missing), so every gap compounds the penalty.
 4. `screen_score` = `raw_screen_score × confidence_multiplier`, so sparse-data
-   names are penalized instead of over-ranked.
+   names are penalized steeply instead of over-ranked.
 
 How allocation uses that score:
 
