@@ -332,12 +332,13 @@ How to read the portfolio allocation output:
 - `params`: the rules used for the run, including currency context.
   - `budget_currency`: always `PLN` (the allocator treats `--budget` as PLN).
   - `fx_usdpln`: USD→PLN rate used to convert US tickers before sizing.
+  - `fx_eurpln`: EUR→PLN rate used to convert euro-denominated tickers before sizing.
   - `max_weight_pct`, `min_score`, `top`, `score_power`, `cash_reserve_pct`,
     `leftover_sweep`: allocation controls.
 - `allocations`: the actual buy plan, one row per selected stock.
 - Per allocation row:
   - `symbol`: ticker.
-  - `currency`: instrument currency (`PLN` or `USD`).
+  - `currency`: instrument currency (`PLN`, `USD` or `EUR`).
   - `price`: native instrument price (e.g., USD for US stocks).
   - `price_pln`: normalized PLN price used by the allocator math.
   - `allocation_score`: effective score used for weighting.

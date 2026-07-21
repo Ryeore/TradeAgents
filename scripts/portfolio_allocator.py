@@ -194,7 +194,18 @@ def fetch_usdpln_rate() -> float:
     return float(rate)
 
 
-def convert_candidates_to_pln(candidates: list[dict], usdpln: float) -> tuple[list[dict], list[dict]]:
+def fetch_eurpln_rate() -> float:
+    """Fetch EURPLN FX spot from yfinance."""
+    ticker = get_ticker("EURPLN=X")
+    info = safe_info(ticker)
+    rate = last_price(ticker, info)
+    if rate is None or rate <= 0:
+        raise ValueError("Could not fetch EURPLN rate. Pass --eurpln manually.")
+    return float(rate)
+
+
+def convert_candidates_to_pln(candidates: list[dict], usdpln: float,
+                              eurpln: float) -> tuple[list[dict], list[dict]]:
     """Return PLN-normalized candidates plus skipped rows with unsupported currency."""
     out: list[dict] = []
     skipped: list[dict] = []
@@ -208,11 +219,13 @@ def convert_candidates_to_pln(candidates: list[dict], usdpln: float) -> tuple[li
             price_pln = float(price)
         elif cur == "USD":
             price_pln = float(price) * usdpln
+        elif cur == "EUR":
+            price_pln = float(price) * eurpln
         else:
             skipped.append({
                 "symbol": c.get("symbol"),
                 "currency": cur,
-                "reason": "unsupported currency (only PLN and USD are supported)",
+                "reason": "unsupported currency (only PLN, USD and EUR are supported)",
             })
             continue
         out.append({**c, "currency": cur, "price_pln": price_pln})
@@ -248,6 +261,7 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
              reserve_pct: float = 0.0, sweep: bool = True,
              holdings: list[dict] | None = None,
              usdpln: float | None = None,
+             eurpln: float | None = None,
              min_fractional_share: float = 0.5,
              use_component_scores: bool = True,
              apply_confidence: bool = True,
@@ -260,8 +274,10 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
     """Distribute `budget` across candidates weighted by score**score_power."""
     if usdpln is None:
         usdpln = fetch_usdpln_rate()
+    if eurpln is None:
+        eurpln = fetch_eurpln_rate()
 
-    normalized, skipped = convert_candidates_to_pln(candidates, float(usdpln))
+    normalized, skipped = convert_candidates_to_pln(candidates, float(usdpln), float(eurpln))
 
     enriched: list[dict] = []
     for c in normalized:
@@ -291,6 +307,7 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         "params": {
             "budget_currency": "PLN",
             "fx_usdpln": round_or_none(usdpln, 6),
+            "fx_eurpln": round_or_none(eurpln, 6),
             "max_weight_pct": round(max_weight * 100, 1),
             "min_score": min_score,
             "top": top or None,
@@ -317,7 +334,7 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
                 "Shares are whole "
                 "units; leftover cash is swept into the highest-scored affordable names "
                 "(still under the per-name cap). Budget is PLN; USD prices are converted "
-                "using fx_usdpln. Educational, not financial advice.",
+                "using fx_usdpln and EUR prices using fx_eurpln. Educational, not financial advice.",
     }
     if skipped:
         result["skipped_candidates"] = skipped
@@ -473,6 +490,8 @@ def main() -> None:
                    help="Disable sweeping leftover cash into affordable top names")
     p.add_argument("--usdpln", type=float,
                    help="Override USDPLN FX rate. If omitted, fetched from yfinance")
+    p.add_argument("--eurpln", type=float,
+                   help="Override EURPLN FX rate. If omitted, fetched from yfinance")
     p.add_argument("--min-fractional-share", type=float, default=0.5,
                    help="If target size is >= this fraction of a share, round up to 1 share")
     p.add_argument("--use-legacy-score", action="store_true",
@@ -506,7 +525,7 @@ def main() -> None:
     emit(allocate(
         args.budget, candidates, max_weight=args.max_weight, min_score=args.min_score,
         top=args.top, score_power=args.score_power, reserve_pct=args.reserve_pct,
-        sweep=not args.no_sweep, holdings=holdings, usdpln=args.usdpln,
+        sweep=not args.no_sweep, holdings=holdings, usdpln=args.usdpln, eurpln=args.eurpln,
         min_fractional_share=args.min_fractional_share,
         use_component_scores=not args.use_legacy_score,
         apply_confidence=not args.no_confidence,
