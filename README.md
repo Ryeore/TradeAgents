@@ -54,10 +54,11 @@ WSE names require the `.WA` suffix, for example `CDR.WA` or `KRU.WA`.
 ### Screen a universe
 
 ```powershell
-python scripts/screen_candidates.py --preset wse_blue --top 8 > screen.json
+# Default horizon is now `long` (buy-and-hold ~10-15y): favors quality + value, ignores short-term trend
+python scripts/screen_candidates.py --preset wse --top 8 > screen.json
 
-# Long-term (buy-and-hold ~10-15y) weighting: favors quality + value, ignores short-term trend
-python scripts/screen_candidates.py --preset wse_blue --top 8 --horizon long > screen.json
+# Override the horizon explicitly for a shorter-term, trend-led ranking
+python scripts/screen_candidates.py --preset wse --top 8 --horizon short > screen.json
 ```
 
 ### Allocate a budget across the shortlist
@@ -108,7 +109,7 @@ budget across the best-scored names. The math lives in
 standalone:
 
 ```powershell
-python scripts/screen_candidates.py --preset wse_blue --top 8 > screen.json
+python scripts/screen_candidates.py --preset wse --top 8 > screen.json
 python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen.json --top 6
 ```
 
@@ -172,8 +173,11 @@ automatic buy. Every field the screener emits is described below.
 |---|---|
 | `universe_size` | Number of tickers screened in this run. |
 | `ranked` | Ordered candidate list, best `screen_score` first. |
-| `horizon` | Investing horizon used for pillar weighting (`short` / `medium` / `long`). |
+| `horizon` | Investing horizon used for pillar weighting (`short` / `medium` / `long`, default `long`). |
 | `pillar_weights` | The value/quality/trend/sentiment/risk weights applied for that horizon. |
+| `score_basis` | How scores are derived (`universe_relative_percentile`). |
+| `comparability` | Caveat: scores are relative to THIS run's universe (value/quality sector-neutral), so they are not comparable across different universes or dates. |
+| `warnings` | Non-fatal warnings, e.g. a too-small universe (<8) where percentiles are coarse. |
 | `method` | One-line summary of the scoring formula and pillar weights. |
 | `next_step` | Reminder that the screen is a coarse filter, not a buy signal. |
 | `disclaimer` | Educational-use and data-coverage caveat. |
@@ -188,17 +192,25 @@ automatic buy. Every field the screener emits is described below.
 | `currency` | — | Instrument currency (`PLN`, `USD`, …). |
 | `screen_score` | 0–100 | **Headline rank.** `raw_screen_score` after the data-confidence multiplier. Higher = stronger blended candidate for deeper work, not an auto-buy. |
 | `raw_screen_score` | 0–100 | Weighted blend of the 5 pillars **before** confidence adjustment. |
-| `confidence_score` | 0–100 | Share of the 13 key inputs that were available (data coverage %). Drives the confidence multiplier. |
-| `value_score` | 0–100 | Value pillar (weight 20%). |
-| `quality_score` | 0–100 | Quality pillar (weight 20%). |
-| `trend_score` | 0–100 | Trend pillar (weight 30%). |
+| `confidence_score` | 0–100 | Share of the required inputs that were available (data coverage %). Drives the confidence multiplier. Short interest is only required for US listings, so non-US names are not penalized for that missing field. |
+| `value_score` | 0–100 | Value pillar (sector-neutral). Weight varies by horizon — see the table below. |
+| `quality_score` | 0–100 | Quality pillar (sector-neutral). Weight varies by horizon. |
+| `trend_score` | 0–100 | Trend pillar (universe-wide). Weight varies by horizon. |
 | `momentum_score` | 0–100 | Backward-compatible alias of `trend_score`. |
-| `sentiment_score` | 0–100 | Sentiment pillar (weight 20%). |
-| `risk_score` | 0–100 | Risk pillar (weight 10%). |
+| `sentiment_score` | 0–100 | Sentiment pillar (universe-wide). Weight varies by horizon. |
+| `risk_score` | 0–100 | Risk pillar (universe-wide). Weight varies by horizon. |
+| `low_liquidity` | bool | `true` when average daily turnover is below the liquidity floor (per-currency default, or `--min-adv`). |
 
 Each pillar is the average of several 0–100 sub-scores. A `null` pillar means
 every input for that pillar was missing; missing pillars are dropped and the
 remaining weights are re-normalized.
+
+**Value and quality are ranked sector-neutrally** — a name is scored against its
+own sector peers when at least 3 are present in the run, otherwise against the
+whole universe. This stops banks (low P/E, low P/B, no gross margin) from
+mechanically out- or under-scoring software names. Trend, sentiment and risk are
+ranked across the whole universe. In small universes (< 8 names) percentiles are
+shrunk toward 50 because the ranking is too coarse to trust.
 
 **`signals` — raw factor inputs (pre-normalization)**
 
@@ -206,24 +218,24 @@ These are the untouched yfinance / price-history values that feed the pillars.
 "Direction" shows which way is better once the factor is converted to a 0–100
 score.
 
-*Value pillar inputs*
+*Value pillar inputs* (ranked sector-neutrally)
 
 | Field | Unit | Direction | Description |
 |---|---|---|---|
 | `analyst_upside_pct` | % | higher | Mean analyst target vs price: `(targetMean/price − 1) × 100`. |
 | `pe_forward` | ratio | lower | Forward P/E (price ÷ next-year EPS estimate). |
 | `price_to_book` | ratio | lower | Price-to-book multiple. |
-| `dividend_yield_pct` | % | higher | Trailing dividend yield (values > 25% treated as bad data and dropped). |
-| `fcf_yield_pct` | % | higher | Free cash flow ÷ market cap: `freeCashflow/marketCap × 100`. |
+| `dividend_yield_pct` | % | higher | Dividend yield, computed robustly (`dividendRate ÷ price` first, then yield fields); values outside 0–25% are dropped as bad data. |
+| `fcf_yield_pct` | % | higher | Free cash flow ÷ market cap: `freeCashflow/marketCap × 100` (an exact 0 is treated as N/A). |
 
-*Quality pillar inputs*
+*Quality pillar inputs* (ranked sector-neutrally)
 
 | Field | Unit | Direction | Description |
 |---|---|---|---|
 | `roe_pct` | % | higher | Return on equity. |
 | `revenue_growth_pct` | % | higher | Year-over-year revenue growth. |
-| `operating_margin_pct` | % | higher | Operating margin. |
-| `gross_margin_pct` | % | higher | Gross margin. |
+| `operating_margin_pct` | % | higher | Operating margin (an exact 0 — common for banks in yfinance — is treated as N/A). |
+| `gross_margin_pct` | % | higher | Gross margin (an exact 0 — common for banks in yfinance — is treated as N/A). |
 
 *Trend pillar inputs*
 
@@ -231,6 +243,7 @@ score.
 |---|---|---|---|
 | `return_3m_pct` | % | higher | 3-month price return (~63 sessions). |
 | `return_6m_pct` | % | higher | 6-month price return (~126 sessions). |
+| `return_12m_pct` | % | higher | 12-month price return (~252 sessions) — momentum, ranked by percentile. |
 | `rsi14` | 0–100 | sweet spot | 14-period RSI; scored best near 57, decaying with distance. |
 | `above_ma50` | bool | — | Whether price > 50-day MA (informational). |
 | `above_ma200` | bool | — | Whether price > 200-day MA (informational). |
@@ -258,45 +271,56 @@ SMAs it uses are computed internally and are **not** emitted in `signals`; the
 |---|---|---|---|
 | `atr_pct_of_price` | % | sweet spot | 14-day ATR ÷ price; scored best near 4% (too calm or too wild both penalized). |
 | `max_drawdown_6m_pct` | % | higher | Worst peak-to-trough drop over 6 months (closer to 0 = better). |
-| `return_12m_pct` | % | higher | 12-month price return (~252 sessions), scaled −40 → 60 as a stability/regime input (scored in the **risk** pillar). |
+| `beta` | ratio | lower | Beta vs the market; lower = less systematic risk (ranked by percentile). |
 | `atr14` | native ccy | — | Raw 14-day ATR in price units (informational; feeds `atr_pct_of_price`). |
+
+*Liquidity & informational*
+
+| Field | Unit | Direction | Description |
+|---|---|---|---|
+| `avg_dollar_volume` | native ccy | — | Average daily turnover (avg volume × price). Feeds the `low_liquidity` flag; not scored. |
 
 **`data_quality` — coverage diagnostics**
 
 | Field | Description |
 |---|---|
-| `coverage_ratio` | Fraction (0–1) of the 13 required inputs that were present. |
+| `coverage_ratio` | Fraction (0–1) of the required inputs that were present. |
 | `coverage_pct` | Same as `coverage_ratio` expressed as a percent (mirrors `confidence_score`). |
+| `sector` | GICS sector used for sector-neutral value/quality ranking (`null` if yfinance had none). |
+| `low_liquidity` | `true` when average daily turnover is below the liquidity floor. |
 
 **How the raw signals become 0–100 sub-scores**
 
-- **Percentile** (most factors): rank within the screened universe, so scores are
-  relative to this run's peer set. Direction flips for "lower-is-better" factors
-  (P/E, P/B, `recommendation_mean`, short interest).
+- **Percentile** (most factors): rank within the peer set. **Value and quality
+  rank sector-neutrally** (within-sector when ≥ 3 peers, else the whole universe);
+  trend, sentiment and risk rank across the whole universe. Direction flips for
+  "lower-is-better" factors (P/E, P/B, `recommendation_mean`, short interest,
+  `beta`). Percentiles are shrunk toward 50 when the universe has < 8 names.
 - **Sweet spot**: peaks at a target and decays linearly with distance — used for
   `rsi14` (57), `proximity_52w_high_pct` (97) and `atr_pct_of_price` (4).
 - **Structure**: discrete moving-average stack score (100 / 80 / 60 / 20).
 - **Linear scale**: mapped from a fixed range onto 0–100 — used for
-  `analyst_opinions` (0 → 30) and the risk-pillar `return_12m_pct` (−40 → 60).
+  `analyst_opinions` (0 → 30).
 
 **How `screen_score` is calculated**
 
 1. Build the 5 pillar scores (each the average of its 0–100 sub-scores). The
-   pillar weights depend on the `--horizon` flag (default `medium`):
+   pillar weights depend on the `--horizon` flag (default `long`):
 
    | Horizon | Value | Quality | Trend | Sentiment | Risk |
    |---|---|---|---|---|---|
    | `short` (weeks–months) | 10% | 10% | 45% | 25% | 10% |
-   | `medium` (~1–5y, default) | 20% | 20% | 30% | 20% | 10% |
-   | `long` (~10–15y) | 30% | 40% | 5% | 10% | 15% |
+   | `medium` (~1–5y) | 20% | 20% | 30% | 20% | 10% |
+   | `long` (~10–15y, default) | 30% | 40% | 5% | 10% | 15% |
 
    A longer horizon leans on quality and value and largely ignores short-term
    trend; a shorter horizon does the opposite.
 2. `raw_screen_score` = weight-normalized blend of the available pillars.
-3. `confidence_score` = % of the 13 key inputs present. The confidence
-   multiplier decays exponentially with each **missing** input:
+3. `confidence_score` = % of the required inputs present (12 for non-US listings,
+   13 for US — short interest is a US-only field). The confidence multiplier decays
+   exponentially with each **missing** input:
    `confidence_multiplier = 0.86 ** missing_inputs` (≈ 1.0 at full coverage,
-   ≈ 0.14 when all 13 are missing), so every gap compounds the penalty.
+   ≈ 0.16 when all required inputs are missing), so every gap compounds the penalty.
 4. `screen_score` = `raw_screen_score × confidence_multiplier`, so sparse-data
    names are penalized steeply instead of over-ranked.
 
@@ -318,6 +342,7 @@ How allocation uses that score:
 
 Useful allocator switches:
 
+- `--horizon {short,medium,long}`: weight the allocation pillars for a horizon.
 - `--use-legacy-score`: disable component mode and use legacy score fields only.
 - `--no-confidence`: disable confidence-based penalty/adjustment.
 - `--confidence-floor 0.7`: minimum confidence multiplier.
@@ -325,6 +350,12 @@ Useful allocator switches:
   target size is at least this fraction.
 - `--w-value`, `--w-quality`, `--w-trend`, `--w-sentiment`, `--w-risk`:
   override component weights for allocation.
+
+By default the allocator **honors the horizon the screener ranked with**: its
+component weights come from the screener payload's `pillar_weights`. Precedence is
+explicit `--w-*` flags > `--horizon` > screener payload > the built-in
+20/20/30/20/10 default. The resolved source is reported in
+`params.allocation_weight_source`.
 
 How to read the portfolio allocation output:
 
@@ -335,6 +366,9 @@ How to read the portfolio allocation output:
   - `fx_eurpln`: EUR→PLN rate used to convert euro-denominated tickers before sizing.
   - `max_weight_pct`, `min_score`, `top`, `score_power`, `cash_reserve_pct`,
     `leftover_sweep`: allocation controls.
+  - `allocation_weights` + `allocation_weight_source`: the value/quality/trend/
+    sentiment/risk weights used to build each `allocation_score`, and where they
+    came from (`screener_payload:<horizon>`, `horizon:<h>`, `flags`, or `default`).
 - `allocations`: the actual buy plan, one row per selected stock.
 - Per allocation row:
   - `symbol`: ticker.
@@ -362,83 +396,88 @@ Example interpretation of a sample row:
 
 ```json
 {
-  "symbol": "MU",
-  "name": "Micron Technology, Inc.",
-  "price": 979.3,
+  "symbol": "NVDA",
+  "name": "NVIDIA Corporation",
+  "price": 203.28,
   "currency": "USD",
-  "screen_score": 69.2,
-  "raw_screen_score": 69.19,
+  "sector": "Technology",
+  "screen_score": 61.5,
+  "raw_screen_score": 61.45,
   "confidence_score": 100.0,
-  "value_score": 62.0,
-  "quality_score": 78.5,
-  "trend_score": 81.7,
-  "momentum_score": 81.7,
-  "sentiment_score": 59.7,
-  "risk_score": 46.4,
+  "value_score": 41.7,
+  "quality_score": 74.6,
+  "trend_score": 50.0,
+  "momentum_score": 50.0,
+  "sentiment_score": 89.4,
+  "risk_score": 51.1,
+  "low_liquidity": false,
   "signals": {
-    "analyst_upside_pct": 51.74,
-    "pe_forward": 6.54,
-    "roe_pct": 66.64,
-    "revenue_growth_pct": 345.7,
-    "return_6m_pct": 199.46,
-    "price_vs_ma200_pct": 110.84,
-    "rsi14": 49.12,
-    "recommendation_mean": 1.42,
-    "atr_pct_of_price": 8.89,
-    "return_12m_pct": 695.47
+    "analyst_upside_pct": 48.72,
+    "pe_forward": 15.83,
+    "price_to_book": 25.19,
+    "roe_pct": 114.29,
+    "revenue_growth_pct": 85.2,
+    "gross_margin_pct": 74.14,
+    "return_12m_pct": 17.9,
+    "recommendation_mean": 1.3,
+    "beta": 2.21,
+    "avg_dollar_volume": 31976755290.0
   },
-  "data_quality": { "coverage_ratio": 1.0, "coverage_pct": 100.0 }
+  "data_quality": { "coverage_ratio": 1.0, "coverage_pct": 100.0, "sector": "Technology", "low_liquidity": false }
 }
 ```
 
-`MU` tops this 12-name universe with `screen_score = 69.2`. Because all 13 key
-inputs are present (`confidence_score = 100`), the confidence multiplier is `1.0`,
-so `screen_score` equals `raw_screen_score` (69.19). The rank is driven by strong
-**quality** (78.5 — ROE 66.6%, revenue growth 345.7%) and **trend** (81.7 — price
-110.8% above its 200-day MA), with a cheap forward P/E (6.54) and 51.7% analyst
-upside lifting **value** (62.0). The **risk** pillar lags (46.4) because volatility
-is high (ATR ≈ 8.9% of price, +695% over 12 months). A high screen score is a cue
-to research further, not a buy.
+`NVDA` tops this 12-name universe with `screen_score = 61.5` on the default
+**`long`** horizon (quality 40% + value 30%). All required inputs are present
+(`confidence_score = 100`), so the confidence multiplier is `1.0` and
+`screen_score` equals `raw_screen_score` (61.45). The rank is driven by strong
+**quality** (74.6 — ROE 114%, revenue growth 85%, gross margin 74%) and
+**sentiment** (89.4 — 58 analysts at consensus 1.3), while a high **beta** (2.21)
+and an 18% six-month drawdown keep **risk** middling (51.1). Note that quality and
+value are scored **against Technology peers only** (sector-neutral). A high screen
+score is a cue to research further, not a buy.
 
 **Allocation row** — `alloc_current_portfolio.json`, top holding (`allocations[0]`)
 for a `2000 PLN` budget:
 
 ```json
 {
-  "symbol": "ASB.WA",
+  "symbol": "XTB.WA",
   "currency": "PLN",
-  "price": 114.1,
-  "price_pln": 114.1,
-  "allocation_score": 56.3,
+  "price": 135.14,
+  "price_pln": 135.14,
+  "allocation_score": 50.95,
   "allocation_score_source": "components+confidence",
-  "score": 56.3,
-  "screen_score": 56.3,
+  "score": 51.0,
+  "screen_score": 51.0,
   "conviction": null,
-  "confidence_score": 92.31,
-  "value_score": 24.8,
-  "quality_score": 33.1,
-  "trend_score": 85.4,
-  "sentiment_score": 52.9,
-  "risk_score": 98.5,
-  "target_weight_pct": 12.04,
-  "shares": 6,
-  "cost": 684.6,
-  "cost_pln": 684.6,
-  "actual_weight_pct": 34.23
+  "confidence_score": 100.0,
+  "value_score": 16.7,
+  "quality_score": 69.7,
+  "trend_score": 77.7,
+  "sentiment_score": 26.7,
+  "risk_score": 76.7,
+  "target_weight_pct": 11.68,
+  "shares": 5,
+  "cost": 675.7,
+  "cost_pln": 675.7,
+  "actual_weight_pct": 33.78
 }
 ```
 
-`ASB.WA` gets an `allocation_score` of `56.3` from the confidence-adjusted component
-blend (`allocation_score_source = "components+confidence"`). Its model
-`target_weight_pct` is only `12.04%`, but after whole-share rounding and the
-leftover-cash sweep it lands at `6` shares × `114.1 PLN` = `684.6 PLN`, i.e. an
-`actual_weight_pct` of `34.23%` — right under the 35% per-name cap. That gap between
-target (12%) and actual (34%) is the sweep concentrating unspent budget into the
-top affordable names. `currency` is `PLN`, so `price_pln` equals `price`.
+`XTB.WA` gets an `allocation_score` of `50.95` from the confidence-adjusted
+component blend (`allocation_score_source = "components+confidence"`), using the
+**`long`-horizon weights inherited from the screener** (`allocation_weight_source =
+"screener_payload:long"`). Its model `target_weight_pct` is only `11.68%`, but after
+whole-share rounding and the leftover-cash sweep it lands at `5` shares × `135.14 PLN`
+= `675.7 PLN`, i.e. an `actual_weight_pct` of `33.78%` — right under the 35% per-name
+cap. That gap between target (12%) and actual (34%) is the sweep concentrating
+unspent budget into the top affordable names. `currency` is `PLN`, so `price_pln`
+equals `price`.
 
-Note how the two files connect: `MU` wins the *screen* (69.2) yet never makes the
+Note how the two files connect: `NVDA` wins the *screen* (61.5) yet never makes the
 *allocation* — it sits in `summary.dropped_below_one_share`, because a single share
-(≈ $979 × 3.7847 ≈ 3706 PLN) blows past the 700 PLN per-name cap (35% of 2000 PLN).
+(≈ $203.28 × 3.7931 ≈ 771 PLN) blows past the 700 PLN per-name cap (35% of 2000 PLN).
 For a US row, `currency` is `USD`, `price` is in USD, and `price_pln` equals
 `price × fx_usdpln`; sizing and `cost_pln` are always computed in PLN.
 

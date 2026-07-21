@@ -129,3 +129,37 @@ def require_symbol(argv) -> str:
     if len(argv) < 2 or not argv[1].strip():
         raise SystemExit("Usage: python <script>.py <TICKER> [extra args]")
     return argv[1].strip().upper()
+
+
+# --------------------------------------------------------------------------- #
+# Shared scoring constants / helpers (screener + allocator)
+# --------------------------------------------------------------------------- #
+# Investing-horizon pillar weightings (value, quality, trend, sentiment, risk;
+# each row sums to 1.0). Longer horizons lean on quality/value and de-emphasize
+# short-term trend/sentiment; shorter horizons do the opposite. Shared so the
+# portfolio allocator can honor the exact horizon the screener ranked with.
+HORIZON_WEIGHTS = {
+    "short":  {"value": 0.10, "quality": 0.10, "trend": 0.45, "sentiment": 0.25, "risk": 0.10},
+    "medium": {"value": 0.20, "quality": 0.20, "trend": 0.30, "sentiment": 0.20, "risk": 0.10},
+    "long":   {"value": 0.30, "quality": 0.40, "trend": 0.05, "sentiment": 0.10, "risk": 0.15},
+}
+DEFAULT_HORIZON = "long"
+
+# Exchange suffixes that denote a NON-US listing. A ticker whose suffix is in
+# this set (e.g. "KRU.WA") is treated as non-US; class-share dots like "BRK.B"
+# are not in the set and remain US.
+NON_US_SUFFIXES = {
+    "WA", "DE", "L", "PA", "AS", "MI", "MC", "SW", "VI", "ST", "HE", "OL", "CO",
+    "BR", "LS", "F", "TO", "V", "HK", "T", "AX", "NZ", "SI", "KS", "KQ", "TW",
+    "SR", "IS", "BK", "JO", "SS", "SZ", "MX", "SA", "BA", "IL",
+}
+
+
+def is_us_listing(symbol: str | None) -> bool:
+    """True for US-listed tickers. Non-US when the suffix is a known exchange code."""
+    if not symbol:
+        return False
+    parts = symbol.strip().upper().split(".")
+    if len(parts) == 1:
+        return True
+    return parts[-1] not in NON_US_SUFFIXES

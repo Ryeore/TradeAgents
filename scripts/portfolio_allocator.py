@@ -25,7 +25,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.common import emit, get_ticker, last_price, round_or_none, safe_info  # noqa: E402
+from lib.common import (  # noqa: E402
+    DEFAULT_HORIZON, HORIZON_WEIGHTS, emit, get_ticker, last_price, round_or_none, safe_info,
+)
 
 
 def read_json_file(path: str) -> object:
@@ -270,7 +272,8 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
              quality_weight: float = 0.20,
              trend_weight: float = 0.30,
              sentiment_weight: float = 0.20,
-             risk_weight: float = 0.10) -> dict:
+             risk_weight: float = 0.10,
+             weight_source: str = "default") -> dict:
     """Distribute `budget` across candidates weighted by score**score_power."""
     if usdpln is None:
         usdpln = fetch_usdpln_rate()
@@ -318,6 +321,7 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
             "use_component_scores": use_component_scores,
             "apply_confidence": apply_confidence,
             "confidence_floor": round_or_none(confidence_floor),
+            "allocation_weight_source": weight_source,
             "allocation_weights": {
                 "value": round_or_none(value_weight),
                 "quality": round_or_none(quality_weight),
@@ -331,6 +335,8 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         "note": "Weights scale with allocation_score^score_power, capped per name. "
                 "Allocation score uses component scores (value/quality/trend/sentiment/risk) "
                 "when available, otherwise falls back to legacy score/screen_score/conviction. "
+                "Component weights honor the screener payload's horizon by default (see "
+                "allocation_weight_source); override with --horizon or explicit --w-* flags. "
                 "Shares are whole "
                 "units; leftover cash is swept into the highest-scored affordable names "
                 "(still under the per-name cap). Budget is PLN; USD prices are converted "
@@ -472,6 +478,37 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
     return result
 
 
+BUILTIN_ALLOCATION_WEIGHTS = {
+    "value": 0.20, "quality": 0.20, "trend": 0.30, "sentiment": 0.20, "risk": 0.10,
+}
+
+
+def resolve_allocation_weights(args, payload) -> tuple[dict, str]:
+    """Resolve component weights by precedence.
+
+    explicit --w-* flags > --horizon > screener payload pillar_weights > builtin.
+    This lets an allocation honor the exact horizon the screener ranked with,
+    instead of silently re-weighting with a different (medium-ish) default.
+    """
+    builtin = dict(BUILTIN_ALLOCATION_WEIGHTS)
+    explicit = {
+        k: v for k, v in (
+            ("value", args.w_value), ("quality", args.w_quality), ("trend", args.w_trend),
+            ("sentiment", args.w_sentiment), ("risk", args.w_risk),
+        ) if v is not None
+    }
+    if explicit:
+        return {**builtin, **explicit}, "flags"
+    if args.horizon:
+        return dict(HORIZON_WEIGHTS[args.horizon]), f"horizon:{args.horizon}"
+    if isinstance(payload, dict) and isinstance(payload.get("pillar_weights"), dict):
+        pw = payload["pillar_weights"]
+        resolved = {k: float(pw.get(k, builtin[k])) for k in builtin}
+        horizon = payload.get("horizon")
+        return resolved, "screener_payload" + (f":{horizon}" if horizon else "")
+    return builtin, "default"
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Split a budget across ranked candidates.")
     p.add_argument("--budget", type=float, required=True, help="Cash to deploy")
@@ -500,15 +537,18 @@ def main() -> None:
                    help="Disable confidence-based score adjustment")
     p.add_argument("--confidence-floor", type=float, default=0.7,
                    help="Minimum multiplier for confidence adjustment (0-1)")
-    p.add_argument("--w-value", type=float, default=0.20,
+    p.add_argument("--horizon", choices=sorted(HORIZON_WEIGHTS),
+                   help="Weight the allocation pillars for an investing horizon. Overrides the "
+                        "screener payload's horizon; overridden by explicit --w-* flags.")
+    p.add_argument("--w-value", type=float, default=None,
                    help="Allocation component weight: value")
-    p.add_argument("--w-quality", type=float, default=0.20,
+    p.add_argument("--w-quality", type=float, default=None,
                    help="Allocation component weight: quality")
-    p.add_argument("--w-trend", type=float, default=0.30,
+    p.add_argument("--w-trend", type=float, default=None,
                    help="Allocation component weight: trend")
-    p.add_argument("--w-sentiment", type=float, default=0.20,
+    p.add_argument("--w-sentiment", type=float, default=None,
                    help="Allocation component weight: sentiment")
-    p.add_argument("--w-risk", type=float, default=0.10,
+    p.add_argument("--w-risk", type=float, default=None,
                    help="Allocation component weight: risk")
     args = p.parse_args()
 
@@ -517,6 +557,8 @@ def main() -> None:
     else:
         obj = json.loads(args.candidates_json)
     candidates = load_candidates(obj)
+
+    weights, weight_source = resolve_allocation_weights(args, obj)
 
     holdings = None
     if args.holdings_file:
@@ -530,11 +572,12 @@ def main() -> None:
         use_component_scores=not args.use_legacy_score,
         apply_confidence=not args.no_confidence,
         confidence_floor=args.confidence_floor,
-        value_weight=args.w_value,
-        quality_weight=args.w_quality,
-        trend_weight=args.w_trend,
-        sentiment_weight=args.w_sentiment,
-        risk_weight=args.w_risk,
+        value_weight=weights["value"],
+        quality_weight=weights["quality"],
+        trend_weight=weights["trend"],
+        sentiment_weight=weights["sentiment"],
+        risk_weight=weights["risk"],
+        weight_source=weight_source,
     ))
 
 

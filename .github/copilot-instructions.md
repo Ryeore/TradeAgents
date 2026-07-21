@@ -37,21 +37,28 @@ Read these instructions in full before acting on any user request.
 │   │   └── devilsAdvocateSkill.md
 │   ├── the-cio/
 │   │   └── theCioSkill.md
-│   └── portfolio-manager/
-│       └── portfolioManagerSkill.md
+│   ├── portfolio-manager/
+│   │   └── portfolioManagerSkill.md
+│   └── malik-gpw-style/
+│       └── malikGpwStyleSkill.md   ← GPW/WSE commentary style
+├── lib/
+│   └── common.py               ← shared yfinance + indicator helpers
 ├── scripts/
 │   ├── fetch_quote.py
 │   ├── fetch_fundamentals.py
 │   ├── fetch_technicals.py
 │   ├── fetch_sentiment.py
 │   ├── fetch_macro.py
-│   ├── screen_candidates.py
+│   ├── screen_candidates.py       ← Opportunity Scout screener
+│   ├── portfolio_allocator.py     ← budget → whole-share buy plan
 │   ├── scorecard.py
-│   └── position_sizer.py
+│   ├── position_sizer.py
+│   └── view_results.py            ← terminal / markdown dashboards
 ├── output/                        ← auto-generated reports (gitignored)
 └── watchlists/
-    ├── wse_blue.txt               ← WSE blue-chip tickers (*.WA suffix)
-    └── us_mega.txt                ← US large-cap tickers
+    ├── wse_blue.txt               ← WSE universe (WIG20 + mWIG40 + sWIG80)
+    ├── us100.txt                  ← US large-cap tickers (preset: us100)
+    └── us_mega.txt                ← US mega-cap tickers
 ```
 
 ---
@@ -185,9 +192,9 @@ Every agent that outputs a 1–10 sub-score uses this consistent scale:
 |----------------|---------|
 | 8.0 – 10.0 | STRONG BUY — high conviction, size up |
 | 6.5 – 7.9 | BUY — solid case, standard position |
-| 5.0 – 6.4 | WATCHLIST — interesting but wait for a better entry |
-| 3.5 – 4.9 | AVOID — thesis has too many holes |
-| 1.0 – 3.4 | SHORT / PASS — multiple red flags, do not buy |
+| 5.0 – 6.4 | ACCUMULATE / STARTER — interesting; scale in or wait for a better entry |
+| 3.5 – 4.9 | HOLD / WATCH — thesis has too many holes to add |
+| 1.0 – 3.4 | AVOID / SELL — multiple red flags, do not buy |
 
 ---
 
@@ -211,8 +218,10 @@ The PM always restates: *"This is a risk framework, not financial advice."*
 
 WSE tickers require the `.WA` suffix (e.g. `CDR.WA`, `PKN.WA`, `KRU.WA`).
 
-- `screen_candidates.py --preset wse_blue` loads `watchlists/wse_blue.txt`.
+- `screen_candidates.py --preset wse` loads `watchlists/wse_blue.txt`.
 - `yfinance` coverage for WSE is partial — flag any `null` fields explicitly.
+- Short interest is a US-only field; the screener does NOT penalize non-US names
+  for its absence (market-aware confidence).
 - For WSE stocks, supplement missing data with web search (Biznesradar,
   StockWatch, GPW official filings).
 - EPS consensus for WSE names: search *"[COMPANY] wyniki konsensus"* or
@@ -276,16 +285,46 @@ Returns: `rate_10y`, `rate_2y`, `yield_curve_spread`, `sector_etf`,
 `ticker_vs_sector`, `web_search_terms` for Fed/cycle/sector research.
 
 ### screen_candidates.py
-Args: `--preset` OR `--universe FILE` OR explicit tickers, `--top N`,
-`--min-score N`.
-Returns ranked JSON: `screen_score` (0–100), `value_score`, `quality_score`,
-`momentum_score`, raw signals, data quality flags.
-Scoring: value 35% + quality 35% + momentum 30%.
+Args: `--preset` (`wse`, `us100`, `all`, `current_portfolio`, `current_pl`) OR
+`--universe FILE` OR explicit tickers, `--top N`, `--min-score N`,
+`--horizon {short,medium,long}` (default `long`), `--min-adv N` (liquidity floor in
+the listing currency), `--drop-illiquid`.
+Returns ranked JSON per name: `screen_score` (0–100), `raw_screen_score`,
+`confidence_score`, `value_score`, `quality_score`, `trend_score`
+(+ `momentum_score` alias), `sentiment_score`, `risk_score`, `low_liquidity`, raw
+`signals` (incl. `beta`, `avg_dollar_volume`), and `data_quality`
+(`coverage_ratio`, `sector`, `low_liquidity`). Top level also emits `horizon`,
+`pillar_weights`, `score_basis`, `comparability`, `warnings`.
+Scoring: horizon-weighted blend of 5 pillars —
+- **value + quality**: sector-neutral percentiles (ranked within sector when ≥3
+  peers, else across the universe); exact-0 margins/FCF are treated as N/A.
+- **trend** (3/6/12m returns, MA structure, RSI, 52w proximity): universe-wide.
+- **sentiment** (analyst consensus, coverage, short interest): universe-wide.
+- **risk** (ATR%, max drawdown, beta): universe-wide.
+Percentiles are shrunk toward 50 for small universes (<8). A market-aware
+confidence multiplier `0.86 ** missing_required_inputs` then applies (short
+interest is only required for US listings).
+Default horizon weights (value/quality/trend/sentiment/risk):
+short 10/10/45/25/10, medium 20/20/30/20/10, long 30/40/5/10/15.
+
+### portfolio_allocator.py
+Args: `--budget` (PLN) + `--candidates-file`/`--candidates-json` (screener output
+or `[{symbol,price,score}]`); optional `--holdings-file`, `--top N`, `--min-score N`,
+`--max-weight` (default 0.35), `--score-power` (default 1.5), `--reserve-pct`,
+`--no-sweep`, `--min-fractional-share` (default 0.5), `--usdpln`/`--eurpln`,
+`--use-legacy-score`, `--no-confidence`, `--confidence-floor` (default 0.7),
+`--horizon {short,medium,long}`, `--w-value/-quality/-trend/-sentiment/-risk`.
+Component-weight precedence: explicit `--w-*` > `--horizon` > the screener
+payload's `pillar_weights` (so allocation honors the horizon the screen ranked at)
+> builtin 20/20/30/20/10. Reported as `params.allocation_weight_source`.
+Returns `allocations[]` (whole shares, `target_weight_pct`, `actual_weight_pct`,
+`cost_pln`) and `summary` (`deployed`, `leftover_cash`, dropped/rounded names,
+optional `portfolio_after_deploy`). Budget is PLN; USD/EUR prices converted via FX.
 
 ### scorecard.py
 Args: `--valuation`, `--quality`, `--technical`, `--sentiment`, `--macro`
 (all 1–10). Optional `--w-*` weight overrides.
-Default weights: valuation 25%, quality 25%, technical 15%, sentiment 15%, macro 20%.
+Default weights: valuation 25%, quality 25%, technical 20%, sentiment 15%, macro 15%.
 Returns: `composite_score`, `verdict_band`, `weighted_breakdown` table.
 
 ### position_sizer.py
@@ -394,8 +433,9 @@ check every box by the end, the analysis is incomplete and must not be delivered
 ## Quick-start commands
 
 ```bash
-# Screen WSE blue-chips
-python scripts/screen_candidates.py --preset wse_blue --top 8
+# Screen WSE blue-chips (long horizon by default), then allocate a budget
+python scripts/screen_candidates.py --preset wse --top 8 > screen.json
+python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen.json --top 6
 
 # Full desk on a US stock
 python scripts/fetch_quote.py AAPL

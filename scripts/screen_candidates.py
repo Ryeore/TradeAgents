@@ -15,7 +15,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.common import (  # noqa: E402
-    atr, emit, get_ticker, history, last_price, round_or_none, rsi, safe_info, sma,
+    DEFAULT_HORIZON, HORIZON_WEIGHTS, atr, emit, get_ticker, history, is_us_listing,
+    last_price, round_or_none, rsi, safe_info, sma,
 )
 
 WATCHLIST_DIR = os.path.join(
@@ -50,18 +51,26 @@ PRESETS = {
 
 # Exponential missing-data penalty: each absent required input multiplies the
 # screen score by MISSING_DATA_DECAY, so gaps compound. Tuned so a row missing
-# all 13 required inputs keeps ~15% of its raw score (0.86 ** 13 ≈ 0.14).
+# all required inputs keeps ~15% of its raw score (0.86 ** 12 ≈ 0.16).
 MISSING_DATA_DECAY = 0.86
 
-# Investing-horizon pillar weightings (value, quality, trend, sentiment, risk;
-# each row sums to 1.0). Longer horizons lean on quality/value and de-emphasize
-# short-term trend/sentiment; shorter horizons do the opposite.
-HORIZON_WEIGHTS = {
-    "short":  {"value": 0.10, "quality": 0.10, "trend": 0.45, "sentiment": 0.25, "risk": 0.10},
-    "medium": {"value": 0.20, "quality": 0.20, "trend": 0.30, "sentiment": 0.20, "risk": 0.10},
-    "long":   {"value": 0.30, "quality": 0.40, "trend": 0.05, "sentiment": 0.10, "risk": 0.15},
-}
-DEFAULT_HORIZON = "long"
+# Investing horizon defaults / pillar weightings are shared with the allocator
+# (see lib.common.HORIZON_WEIGHTS). Imported above so both stay in lock-step.
+
+# Sector-neutral ranking: value/quality features are ranked WITHIN a company's
+# sector when at least this many sector peers have the field, otherwise the
+# ranking falls back to the whole screened universe. This stops banks (low P/E,
+# low P/B, no gross margin) from mechanically out/under-scoring software names.
+MIN_SECTOR_GROUP = 3
+
+# Below this universe size, cross-sectional percentiles are coarse/noisy, so we
+# shrink each percentile toward the neutral 50 (regularization) and warn.
+SMALL_UNIVERSE_N = 8
+
+# Per-currency soft daily-turnover floors (in the listing currency). Names below
+# their floor are flagged `low_liquidity` (informational; not dropped unless the
+# caller passes --min-adv). Rough retail-tradeable thresholds, not hard limits.
+DEFAULT_ADV_FLOOR = {"USD": 2_000_000.0, "PLN": 2_000_000.0, "EUR": 2_000_000.0}
 
 
 def clamp(x, lo=0.0, hi=100.0):
@@ -82,6 +91,59 @@ def _pct(v):
     if v is None:
         return None
     return v * 100 if abs(v) < 5 else v
+
+
+def _na_if_zero(v):
+    """Treat an exact 0.0 as not-applicable.
+
+    yfinance reports grossMargins / operatingMargins / freeCashflow as exactly
+    0 for businesses where the field is undefined (notably banks and insurers).
+    A literal 0 would otherwise land at the bottom of a percentile ranking, so
+    we drop it to None (excluded from scoring) instead of scoring it worst.
+    """
+    if v is None:
+        return None
+    return None if abs(v) < 1e-9 else v
+
+
+def _dividend_yield_pct(info: dict, price: float | None):
+    """Robust dividend yield in percent, resilient to yfinance version drift.
+
+    Preference order (most reliable first):
+      1. dividendRate / price               (unambiguous, version-independent)
+      2. trailingAnnualDividendRate / price
+      3. (trailing)dividendYield with best-effort fraction-vs-percent detection
+    Anything outside a sane 0-25% band is treated as a data glitch -> None.
+    """
+    def _sane(y):
+        return y if y is not None and 0.0 <= y <= 25.0 else None
+
+    for rate_key in ("dividendRate", "trailingAnnualDividendRate"):
+        rate = info.get(rate_key)
+        if rate and price:
+            got = _sane(rate / price * 100.0)
+            if got is not None:
+                return round(got, 4)
+
+    for yld_key in ("trailingAnnualDividendYield", "dividendYield"):
+        y = info.get(yld_key)
+        if y is None:
+            continue
+        if y > 100:            # e.g. 543 basis-point-ish glitch -> 5.43
+            y = y / 100.0
+        elif 0 < y <= 1:       # fraction 0.023 -> 2.3 (percent values stay as-is)
+            y = y * 100.0
+        got = _sane(y)
+        if got is not None:
+            return round(got, 4)
+    return None
+
+
+def _shrink_toward_50(score, shrink: float):
+    """Pull a percentile score toward the neutral 50 by `shrink` in (0,1]."""
+    if score is None:
+        return None
+    return round(50.0 + (score - 50.0) * shrink, 1)
 
 
 def avg(parts: list[float | None]) -> float | None:
@@ -146,23 +208,28 @@ def collect_features(symbol):
     upside = (target / price - 1) * 100 if price and target else None
     pe_fwd = info.get("forwardPE")
     pb = info.get("priceToBook")
-    div = info.get("dividendYield")
-    div = div * 100 if div and div < 1 else div
-    if div is not None and div > 25:
-        div = None
+    div = _dividend_yield_pct(info, price)
     roe = _pct(info.get("returnOnEquity"))
     rev_g = _pct(info.get("revenueGrowth"))
-    op_margin = _pct(info.get("operatingMargins"))
-    gross_margin = _pct(info.get("grossMargins"))
+    op_margin = _na_if_zero(_pct(info.get("operatingMargins")))
+    gross_margin = _na_if_zero(_pct(info.get("grossMargins")))
+    beta = info.get("beta")
+    sector = info.get("sector")
     rec_mean = info.get("recommendationMean")
     analyst_n = info.get("numberOfAnalystOpinions")
     short_pct = _pct(info.get("shortPercentOfFloat"))
 
     fcf_yield = None
     market_cap = info.get("marketCap")
-    free_cashflow = info.get("freeCashflow")
+    free_cashflow = _na_if_zero(info.get("freeCashflow"))
     if market_cap and free_cashflow:
         fcf_yield = (free_cashflow / market_cap) * 100
+
+    # Average daily turnover (liquidity), in the listing currency.
+    avg_volume = info.get("averageVolume") or info.get("averageDailyVolume10Day")
+    avg_dollar_volume = None
+    if avg_volume and price:
+        avg_dollar_volume = float(avg_volume) * float(price)
 
     ret3m = ret6m = ret12m = None
     ma20 = ma50 = ma200 = rsi14 = above50 = above200 = None
@@ -222,11 +289,20 @@ def collect_features(symbol):
             dd = close_6m / roll_max - 1.0
             max_dd_6m_pct = round_or_none(float(dd.min()) * 100)
 
+        if avg_volume is None and "Volume" in df:
+            vol_tail = df["Volume"].tail(30).dropna()
+            if not vol_tail.empty:
+                avg_volume = float(vol_tail.mean())
+
+    if avg_dollar_volume is None and avg_volume and price:
+        avg_dollar_volume = float(avg_volume) * float(price)
+
     return {
         "symbol": symbol,
         "name": info.get("shortName") or info.get("longName"),
         "price": round_or_none(price),
         "currency": info.get("currency"),
+        "sector": sector,
         "features": {
             "analyst_upside_pct": round_or_none(upside),
             "pe_forward": round_or_none(pe_fwd),
@@ -256,17 +332,52 @@ def collect_features(symbol):
             "atr_pct_of_price": atr_pct,
             "proximity_52w_high_pct": prox_52w_high_pct,
             "max_drawdown_6m_pct": max_dd_6m_pct,
+            "beta": round_or_none(beta),
+            "avg_volume": round_or_none(avg_volume, 0),
+            "avg_dollar_volume": round_or_none(avg_dollar_volume, 0),
         },
     }
 
 
-def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
-    """Score candidates with horizon-weighted value/quality/trend/sentiment/risk pillars."""
+def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0):
+    """Score candidates with horizon-weighted value/quality/trend/sentiment/risk pillars.
+
+    Value/quality features are ranked sector-neutrally (within-sector when enough
+    peers exist), percentiles are shrunk toward 50 for tiny universes, the
+    missing-data confidence penalty is market-aware (US-only fields don't punish
+    non-US listings), and each name gets a liquidity flag.
+    """
     hw = HORIZON_WEIGHTS.get(horizon, HORIZON_WEIGHTS[DEFAULT_HORIZON])
     universe = [row.get("features", {}) for row in collected_rows]
+    sectors = [row.get("sector") for row in collected_rows]
+
+    # Regularize percentiles when the universe is too small to rank reliably.
+    n_uni = len(universe)
+    shrink = min(1.0, (n_uni / SMALL_UNIVERSE_N) ** 0.5) if n_uni > 0 else 1.0
 
     def vals(key):
         return [f.get(key) for f in universe if f.get(key) is not None]
+
+    def sector_vals(key, sector):
+        return [
+            f.get(key)
+            for f, s in zip(universe, sectors)
+            if s == sector and f.get(key) is not None
+        ]
+
+    def upctl(value, all_vals, higher_better=True):
+        """Universe-wide percentile, shrunk toward 50 for small universes."""
+        return _shrink_toward_50(
+            percentile_score(value, all_vals, higher_better=higher_better), shrink
+        )
+
+    def spctl(value, key, sector, all_vals, higher_better=True):
+        """Sector-neutral percentile: rank within sector when >= MIN_SECTOR_GROUP peers."""
+        grp = sector_vals(key, sector) if sector else []
+        use = grp if len(grp) >= MIN_SECTOR_GROUP else all_vals
+        return _shrink_toward_50(
+            percentile_score(value, use, higher_better=higher_better), shrink
+        )
 
     pe_vals = vals("pe_forward")
     pb_vals = vals("price_to_book")
@@ -281,6 +392,7 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
 
     ret3_vals = vals("return_3m_pct")
     ret6_vals = vals("return_6m_pct")
+    ret12_vals = vals("return_12m_pct")
     p200_vals = vals("price_vs_ma200_pct")
     spread_vals = vals("ma50_vs_ma200_pct")
     slope_vals = vals("ma200_slope_3m_pct")
@@ -289,43 +401,49 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
     short_vals = vals("short_interest_pct_float")
 
     max_dd_vals = vals("max_drawdown_6m_pct")
+    beta_vals = vals("beta")
 
     scored = []
-    for row in collected_rows:
+    for row, sector in zip(collected_rows, sectors):
         f = row.get("features", {})
 
+        # Value + quality: sector-neutral (bank P/E vs software P/E is apples-to-oranges).
         value_parts = [
-            percentile_score(f.get("analyst_upside_pct"), upside_vals, higher_better=True),
-            percentile_score(f.get("pe_forward"), pe_vals, higher_better=False),
-            percentile_score(f.get("price_to_book"), pb_vals, higher_better=False),
-            percentile_score(f.get("dividend_yield_pct"), div_vals, higher_better=True),
-            percentile_score(f.get("fcf_yield_pct"), fcf_vals, higher_better=True),
+            spctl(f.get("analyst_upside_pct"), "analyst_upside_pct", sector, upside_vals, True),
+            spctl(f.get("pe_forward"), "pe_forward", sector, pe_vals, False),
+            spctl(f.get("price_to_book"), "price_to_book", sector, pb_vals, False),
+            spctl(f.get("dividend_yield_pct"), "dividend_yield_pct", sector, div_vals, True),
+            spctl(f.get("fcf_yield_pct"), "fcf_yield_pct", sector, fcf_vals, True),
         ]
         quality_parts = [
-            percentile_score(f.get("roe_pct"), roe_vals, higher_better=True),
-            percentile_score(f.get("revenue_growth_pct"), rev_vals, higher_better=True),
-            percentile_score(f.get("operating_margin_pct"), opm_vals, higher_better=True),
-            percentile_score(f.get("gross_margin_pct"), gm_vals, higher_better=True),
+            spctl(f.get("roe_pct"), "roe_pct", sector, roe_vals, True),
+            spctl(f.get("revenue_growth_pct"), "revenue_growth_pct", sector, rev_vals, True),
+            spctl(f.get("operating_margin_pct"), "operating_margin_pct", sector, opm_vals, True),
+            spctl(f.get("gross_margin_pct"), "gross_margin_pct", sector, gm_vals, True),
         ]
+        # Trend: momentum is comparable across sectors -> universe-wide. 12m return
+        # lives here (it is momentum, not risk).
         trend_parts = [
-            percentile_score(f.get("return_3m_pct"), ret3_vals, higher_better=True),
-            percentile_score(f.get("return_6m_pct"), ret6_vals, higher_better=True),
-            percentile_score(f.get("price_vs_ma200_pct"), p200_vals, higher_better=True),
-            percentile_score(f.get("ma50_vs_ma200_pct"), spread_vals, higher_better=True),
-            percentile_score(f.get("ma200_slope_3m_pct"), slope_vals, higher_better=True),
+            upctl(f.get("return_3m_pct"), ret3_vals, True),
+            upctl(f.get("return_6m_pct"), ret6_vals, True),
+            upctl(f.get("return_12m_pct"), ret12_vals, True),
+            upctl(f.get("price_vs_ma200_pct"), p200_vals, True),
+            upctl(f.get("ma50_vs_ma200_pct"), spread_vals, True),
+            upctl(f.get("ma200_slope_3m_pct"), slope_vals, True),
             sweet_spot_score(f.get("rsi14"), target=57, slope=3),
             structure_score(row.get("price"), f.get("ma20"), f.get("ma50"), f.get("ma200")),
             sweet_spot_score(f.get("proximity_52w_high_pct"), target=97, slope=4),
         ]
         sentiment_parts = [
-            percentile_score(f.get("recommendation_mean"), rec_vals, higher_better=False),
+            upctl(f.get("recommendation_mean"), rec_vals, False),
             scale(f.get("analyst_opinions"), 0, 30),
-            percentile_score(f.get("short_interest_pct_float"), short_vals, higher_better=False),
+            upctl(f.get("short_interest_pct_float"), short_vals, False),
         ]
+        # Risk: genuine risk only -> volatility (ATR%), drawdown, and beta.
         risk_parts = [
             sweet_spot_score(f.get("atr_pct_of_price"), target=4, slope=15),
-            percentile_score(f.get("max_drawdown_6m_pct"), max_dd_vals, higher_better=True),
-            scale(f.get("return_12m_pct"), -40, 60),
+            upctl(f.get("max_drawdown_6m_pct"), max_dd_vals, True),
+            upctl(f.get("beta"), beta_vals, False),
         ]
 
         value_s = avg(value_parts)
@@ -348,13 +466,18 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
         else:
             raw_score = None
 
+        # Market-aware confidence: short interest is a US-only field, so it is not
+        # required for non-US listings (otherwise every WSE name eats a flat
+        # penalty for a field Yahoo never provides).
+        is_us = is_us_listing(row.get("symbol"))
         required_features = [
             f.get("analyst_upside_pct"), f.get("pe_forward"), f.get("price_to_book"),
             f.get("roe_pct"), f.get("revenue_growth_pct"), f.get("return_3m_pct"),
             f.get("return_6m_pct"), f.get("rsi14"), f.get("ma50"), f.get("ma200"),
-            f.get("recommendation_mean"), f.get("short_interest_pct_float"),
-            f.get("atr_pct_of_price"),
+            f.get("recommendation_mean"), f.get("atr_pct_of_price"),
         ]
+        if is_us:
+            required_features.append(f.get("short_interest_pct_float"))
         present = sum(1 for x in required_features if x is not None)
         missing = len(required_features) - present
         coverage_ratio = present / len(required_features) if required_features else 0.0
@@ -363,6 +486,13 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
         # decay steeply. Full coverage leaves the score untouched.
         confidence_multiplier = MISSING_DATA_DECAY ** missing
         screen_score = round(raw_score * confidence_multiplier, 1) if raw_score is not None else None
+
+        # Liquidity flag (informational). Floor is the caller's --min-adv when set,
+        # else a per-currency soft default in the listing currency.
+        adv = f.get("avg_dollar_volume")
+        currency = (row.get("currency") or "").upper()
+        adv_floor = min_adv if min_adv and min_adv > 0 else DEFAULT_ADV_FLOOR.get(currency, 0.0)
+        low_liquidity = bool(adv is not None and adv_floor > 0 and adv < adv_floor)
 
         row.update({
             "screen_score": screen_score,
@@ -374,6 +504,7 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
             "momentum_score": trend_s,
             "sentiment_score": sentiment_s,
             "risk_score": risk_s,
+            "low_liquidity": low_liquidity,
             "signals": {
                 "analyst_upside_pct": f.get("analyst_upside_pct"),
                 "pe_forward": f.get("pe_forward"),
@@ -400,10 +531,14 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON):
                 "atr_pct_of_price": f.get("atr_pct_of_price"),
                 "proximity_52w_high_pct": f.get("proximity_52w_high_pct"),
                 "max_drawdown_6m_pct": f.get("max_drawdown_6m_pct"),
+                "beta": f.get("beta"),
+                "avg_dollar_volume": f.get("avg_dollar_volume"),
             },
             "data_quality": {
                 "coverage_ratio": round_or_none(coverage_ratio),
                 "coverage_pct": round_or_none(coverage_ratio * 100),
+                "sector": sector,
+                "low_liquidity": low_liquidity,
             },
         })
         row.pop("features", None)
@@ -440,6 +575,11 @@ def main():
                    help="Investing horizon: short (weeks-months), medium (~1-5y), or "
                         "long (~10-15y). Re-weights the scoring pillars (long favors "
                         "quality/value, short favors trend/sentiment).")
+    p.add_argument("--min-adv", type=float, default=0.0,
+                   help="Min average daily turnover in the listing currency. Flags names "
+                        "below it as low_liquidity; with --drop-illiquid also removes them.")
+    p.add_argument("--drop-illiquid", action="store_true",
+                   help="Exclude names flagged low_liquidity from the ranking.")
     args = p.parse_args()
 
     universe = load_universe(args)
@@ -456,7 +596,10 @@ def main():
             print(f"[{idx}/{total}] {sym} failed: {exc}", file=sys.stderr, flush=True)
             rows.append({"symbol": sym, "error": str(exc), "screen_score": None})
 
-    rows = score_candidates(rows, horizon=args.horizon)
+    rows = score_candidates(rows, horizon=args.horizon, min_adv=args.min_adv)
+
+    if args.drop_illiquid:
+        rows = [r for r in rows if not r.get("low_liquidity")]
 
     ranked = sorted(rows, key=lambda r: (r.get("screen_score") is not None,
                                          r.get("screen_score") or 0), reverse=True)
@@ -465,18 +608,35 @@ def main():
     if args.top:
         ranked = ranked[:args.top]
 
+    warnings = []
+    if len(universe) < SMALL_UNIVERSE_N:
+        warnings.append(
+            f"Small universe ({len(universe)} < {SMALL_UNIVERSE_N}): cross-sectional "
+            "percentiles are coarse and shrunk toward 50; treat score gaps as weak signals."
+        )
+
     hw = HORIZON_WEIGHTS[args.horizon]
     emit({
         "universe_size": len(universe),
         "horizon": args.horizon,
         "pillar_weights": {k: round(v, 2) for k, v in hw.items()},
+        "score_basis": "universe_relative_percentile",
+        "comparability": (
+            "Value/quality are ranked sector-neutrally (within-sector when >= "
+            f"{MIN_SECTOR_GROUP} peers, else universe); trend/sentiment/risk are ranked "
+            "across the whole universe. Scores are RELATIVE to THIS run's universe and are "
+            "NOT comparable across different universes or dates."
+        ),
+        "warnings": warnings,
         "ranked": ranked,
         "method": (f"screen_score = weighted(value {hw['value']:.0%} + quality {hw['quality']:.0%} + "
                    f"trend {hw['trend']:.0%} + sentiment {hw['sentiment']:.0%} + risk {hw['risk']:.0%}) "
-                   f"for horizon '{args.horizon}', all 0-100 and percentile-normalized within the "
-                   "screened universe, then confidence-adjusted by data coverage (exponential penalty: "
-                   "multiplier = 0.86 ** missing_inputs, so each missing field compounds the "
-                   "punishment). Momentum_score is a backward-compatible alias of trend_score."),
+                   f"for horizon '{args.horizon}'. Value/quality use sector-neutral percentiles; "
+                   "trend (incl. 3/6/12m returns) and risk (ATR%, drawdown, beta) use universe-wide "
+                   "percentiles. Percentiles are shrunk toward 50 for small universes, then the score "
+                   "is confidence-adjusted by data coverage (exponential penalty: multiplier = "
+                   "0.86 ** missing_inputs; short interest is not required for non-US listings). "
+                   "Momentum_score is a backward-compatible alias of trend_score."),
         "next_step": "Take the top names into data-scout / the analyst-desk for a full work-up. "
                      "Screen score is a coarse filter, NOT a buy signal.",
         "disclaimer": "Educational screen, not financial advice. yfinance fields can be missing "
