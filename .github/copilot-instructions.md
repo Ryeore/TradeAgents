@@ -49,6 +49,7 @@ Read these instructions in full before acting on any user request.
 │   ├── fetch_technicals.py
 │   ├── fetch_sentiment.py
 │   ├── fetch_macro.py
+│   ├── fetch_biznesradar.py       ← WSE-only enrichment (Piotroski/Altman + ratios)
 │   ├── screen_candidates.py       ← Opportunity Scout screener
 │   ├── portfolio_allocator.py     ← budget → whole-share buy plan
 │   ├── scorecard.py
@@ -224,6 +225,12 @@ WSE tickers require the `.WA` suffix (e.g. `CDR.WA`, `PKN.WA`, `KRU.WA`).
   for its absence (market-aware confidence).
 - For WSE stocks, supplement missing data with web search (Biznesradar,
   StockWatch, GPW official filings).
+- `screen_candidates.py --biznesradar` scrapes biznesradar.pl for each `.WA` name:
+  it adds a **Piotroski F-Score** (quality pillar) and **Altman EM-Score** (risk
+  pillar) — neither has a Yahoo equivalent — and backfills ROE / P-B when yfinance
+  returns `null`. Opt-in (default off); results cache to
+  `output/biznesradar/<CODE>.json` for 12h. Banks/financials return no F-Score or
+  Altman (biznesradar does not compute them) and are handled gracefully.
 - EPS consensus for WSE names: search *"[COMPANY] wyniki konsensus"* or
   *"[TICKER].WA prognoza zysku"*.
 - Macro Strategist should note NBP (Polish central bank) policy alongside
@@ -288,24 +295,45 @@ Returns: `rate_10y`, `rate_2y`, `yield_curve_spread`, `sector_etf`,
 Args: `--preset` (`wse`, `us100`, `all`, `current_portfolio`, `current_pl`) OR
 `--universe FILE` OR explicit tickers, `--top N`, `--min-score N`,
 `--horizon {short,medium,long}` (default `long`), `--min-adv N` (liquidity floor in
-the listing currency), `--drop-illiquid`.
+the listing currency), `--drop-illiquid`, `--biznesradar` (opt-in WSE enrichment,
+default off).
 Returns ranked JSON per name: `screen_score` (0–100), `raw_screen_score`,
 `confidence_score`, `value_score`, `quality_score`, `trend_score`
 (+ `momentum_score` alias), `sentiment_score`, `risk_score`, `low_liquidity`, raw
-`signals` (incl. `beta`, `avg_dollar_volume`), and `data_quality`
-(`coverage_ratio`, `sector`, `low_liquidity`). Top level also emits `horizon`,
-`pillar_weights`, `score_basis`, `comparability`, `warnings`.
+`signals` (incl. `beta`, `avg_dollar_volume`, plus `piotroski_f_score` +
+`altman_health_score` under `--biznesradar`), and `data_quality`
+(`coverage_ratio`, `sector`, `low_liquidity`). Under `--biznesradar` each row also
+carries `biznesradar_enriched` + `biznesradar_sourced`. Top level also emits
+`horizon`, `pillar_weights`, `score_basis`, `comparability`, `warnings`, and
+`biznesradar_enrichment`.
 Scoring: horizon-weighted blend of 5 pillars —
 - **value + quality**: sector-neutral percentiles (ranked within sector when ≥3
-  peers, else across the universe); exact-0 margins/FCF are treated as N/A.
+  peers, else across the universe); exact-0 margins/FCF are treated as N/A. With
+  `--biznesradar`, the Piotroski F-Score (`f/9×100`) adds an absolute quality
+  sub-score for `.WA` names.
 - **trend** (3/6/12m returns, MA structure, RSI, 52w proximity): universe-wide.
 - **sentiment** (analyst consensus, coverage, short interest): universe-wide.
-- **risk** (ATR%, max drawdown, beta): universe-wide.
+- **risk** (ATR%, max drawdown, beta): universe-wide. With `--biznesradar`, the
+  Altman EM-Score (`altman_health_score`, 0–100, higher = safer) adds a
+  fundamental-solvency term for `.WA` names.
 Percentiles are shrunk toward 50 for small universes (<8). A market-aware
 confidence multiplier `0.86 ** missing_required_inputs` then applies (short
 interest is only required for US listings).
 Default horizon weights (value/quality/trend/sentiment/risk):
 short 10/10/45/25/10, medium 20/20/30/20/10, long 30/40/5/10/15.
+
+### fetch_biznesradar.py
+WSE-only supplemental scraper (biznesradar.pl has no API — the one script that does
+not use yfinance). Args: `SYMBOL` (Yahoo-style `.WA` ticker, mapped `DIA.WA` →
+`DIA`), `--no-cache`, `--cache-ttl` (seconds, default 12h). Returns FREE fields only
+(EBITDA/EV are premium-gated): `piotroski_f_score` (0–9), `altman_score` (letter
+grade) + `altman_health_score` (0–100), `pe`/`pb`/`ps`/`p_ebit`, `roe_pct`/
+`roa_pct`, `vs_sector_median` deltas, `report_period`, `warnings`,
+`web_search_terms`. biznesradar's `pe` (C/Z) is **trailing**, so it is NOT used as
+a forward-P/E fallback. Deps `requests` + `beautifulsoup4` (ship with yfinance).
+Honors `REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE`/`SSL_CERT_FILE` for corporate TLS.
+Consumed by `screen_candidates.py --biznesradar`; caches to
+`output/biznesradar/<CODE>.json`.
 
 ### portfolio_allocator.py
 Args: `--budget` (PLN) + `--candidates-file`/`--candidates-json` (screener output

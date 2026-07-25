@@ -39,6 +39,7 @@ python scripts/position_sizer.py --price 100 --atr 3.2 --conviction 7 --account 
 | `fetch_technicals.py` | Trend, RSI, MFI, ATR, Fibonacci levels |
 | `fetch_sentiment.py` | Short interest, analyst trend, insider/institutional context |
 | `fetch_macro.py` | Rates and sector-relative macro backdrop |
+| `fetch_biznesradar.py` | WSE-only enrichment: Piotroski F-Score, Altman EM-Score, valuation ratios (opt-in) |
 | `screen_candidates.py` | Multi-factor ranking across a watchlist or universe |
 | `portfolio_allocator.py` | Converts ranked candidates into a whole-share buy plan |
 | `position_sizer.py` | Risk-based position sizing for a single name |
@@ -59,7 +60,34 @@ python scripts/screen_candidates.py --preset wse --top 8 > screen.json
 
 # Override the horizon explicitly for a shorter-term, trend-led ranking
 python scripts/screen_candidates.py --preset wse --top 8 --horizon short > screen.json
+
+# Enrich WSE (.WA) names with biznesradar.pl (Piotroski F-Score + Altman EM-Score; opt-in)
+python scripts/screen_candidates.py --preset wse --top 8 --biznesradar > screen.json
 ```
+
+### Enrich WSE names with biznesradar (optional)
+
+For `.WA` (Warsaw) names, `--biznesradar` supplements yfinance with data scraped
+from [biznesradar.pl](https://www.biznesradar.pl):
+
+- **Piotroski F-Score** (0–9) → an absolute sub-score in the **quality** pillar.
+- **Altman EM-Score** (distress rating) → a 0–100 solvency term in the **risk**
+  pillar (otherwise price-only); higher = safer.
+- **ROE / P-B backfill** — applied only when yfinance returns `null` for a name.
+
+```powershell
+python scripts/screen_candidates.py --preset wse --top 12 --biznesradar > screen_wse.json
+```
+
+- Opt-in; default runs are unchanged and yfinance-only. Non-`.WA` names are never scraped.
+- Results cache to `output/biznesradar/<CODE>.json` for 12h: the first pass over a
+  large universe pays a one-time scrape cost (~+125s over 138 WSE names), warm runs
+  add only ~15s (~+17%).
+- Banks/financials return no F-Score or Altman (biznesradar does not compute them);
+  those names fall back to the yfinance-only pillars.
+- biznesradar's P/E (C/Z) is **trailing**, so it is not used as a forward-P/E fallback.
+- Each enriched row carries `biznesradar_enriched` (bool) and `biznesradar_sourced`
+  (fields backfilled); the run's top level sets `biznesradar_enrichment: true`.
 
 ### Allocate a budget across the shortlist
 
@@ -117,13 +145,14 @@ Typical sample workflows:
 
 ```powershell
 # WSE flow: screen -> allocate -> review
+#   (add --biznesradar to the screen step to fold in Piotroski F-Score + Altman EM-Score for .WA names)
 python scripts/screen_candidates.py --preset wse --top 12 > screen_wse.json
 python scripts/portfolio_allocator.py --budget 5000 --candidates-file screen_wse.json --top 6 > alloc_wse.json
 python scripts/view_results.py --screen-file screen_wse.json --allocation-file alloc_wse.json --top 10 --out-md output/dashboard.md
 
 # US flow: screen -> allocate -> review
 python scripts/screen_candidates.py --preset us100 --top 15 > screen_us.json
-python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen_us.json --top 8 > alloc_us.json
+python scripts/portfolio_allocator.py --budget 5000 --candidates-file screen_us.json --top 8 > alloc_us.json
 python scripts/view_results.py --screen-file screen_us.json --allocation-file alloc_us.json --top 10 --out-md output/dashboard.md
 
 # ALL flow: screen -> allocate -> review
@@ -178,6 +207,7 @@ automatic buy. Every field the screener emits is described below.
 | `score_basis` | How scores are derived (`universe_relative_percentile`). |
 | `comparability` | Caveat: scores are relative to THIS run's universe (value/quality sector-neutral), so they are not comparable across different universes or dates. |
 | `warnings` | Non-fatal warnings, e.g. a too-small universe (<8) where percentiles are coarse. |
+| `biznesradar_enrichment` | `true` when the run used `--biznesradar` (WSE `.WA` names enriched from biznesradar.pl). |
 | `method` | One-line summary of the scoring formula and pillar weights. |
 | `next_step` | Reminder that the screen is a coarse filter, not a buy signal. |
 | `disclaimer` | Educational-use and data-coverage caveat. |
@@ -236,6 +266,7 @@ score.
 | `revenue_growth_pct` | % | higher | Year-over-year revenue growth. |
 | `operating_margin_pct` | % | higher | Operating margin (an exact 0 — common for banks in yfinance — is treated as N/A). |
 | `gross_margin_pct` | % | higher | Gross margin (an exact 0 — common for banks in yfinance — is treated as N/A). |
+| `piotroski_f_score` | 0–9 | higher | **`--biznesradar` only (WSE).** Piotroski F-Score from biznesradar.pl, added as an absolute `f/9×100` quality sub-score. `null` for banks/financials. |
 
 *Trend pillar inputs*
 
@@ -272,6 +303,7 @@ SMAs it uses are computed internally and are **not** emitted in `signals`; the
 | `atr_pct_of_price` | % | sweet spot | 14-day ATR ÷ price; scored best near 4% (too calm or too wild both penalized). |
 | `max_drawdown_6m_pct` | % | higher | Worst peak-to-trough drop over 6 months (closer to 0 = better). |
 | `beta` | ratio | lower | Beta vs the market; lower = less systematic risk (ranked by percentile). |
+| `altman_health_score` | 0–100 | higher | **`--biznesradar` only (WSE).** Altman EM-Score (distress rating) mapped to a 0–100 solvency term; higher = safer. `null` for banks/financials. |
 | `atr14` | native ccy | — | Raw 14-day ATR in price units (informational; feeds `atr_pct_of_price`). |
 
 *Liquidity & informational*
@@ -301,6 +333,9 @@ SMAs it uses are computed internally and are **not** emitted in `signals`; the
 - **Structure**: discrete moving-average stack score (100 / 80 / 60 / 20).
 - **Linear scale**: mapped from a fixed range onto 0–100 — used for
   `analyst_opinions` (0 → 30).
+- **Absolute** (`--biznesradar`, WSE only): the Piotroski F-Score maps linearly to
+  `f/9 × 100` and the Altman EM-Score maps to a 0–100 solvency ladder; both feed
+  their pillar directly instead of being percentile-ranked.
 
 **How `screen_score` is calculated**
 

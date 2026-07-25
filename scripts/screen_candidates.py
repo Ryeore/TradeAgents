@@ -19,6 +19,16 @@ from lib.common import (  # noqa: E402
     last_price, round_or_none, rsi, safe_info, sma,
 )
 
+# biznesradar enrichment (Warsaw/WSE only) is optional. Import it from this same
+# scripts/ dir, but never let a missing module or dependency break the screen.
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+try:
+    import fetch_biznesradar  # noqa: E402
+except Exception:  # pragma: no cover - enrichment is best-effort
+    fetch_biznesradar = None
+
 WATCHLIST_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "watchlists"
 )
@@ -188,6 +198,13 @@ def structure_score(price, ma20, ma50, ma200):
     return 20.0
 
 
+def piotroski_score(f_score):
+    """Map a Piotroski F-Score (0-9) to a direct 0-100 quality sub-score."""
+    if f_score is None:
+        return None
+    return round(max(0, min(9, f_score)) / 9 * 100, 1)
+
+
 def _latest(series):
     if series is None:
         return None
@@ -197,8 +214,14 @@ def _latest(series):
     return float(valid.iloc[-1])
 
 
-def collect_features(symbol):
-    """Collect raw value, quality, trend, sentiment, and risk features for one symbol."""
+def collect_features(symbol, use_biznesradar=False):
+    """Collect raw value, quality, trend, sentiment, and risk features for one symbol.
+
+    When ``use_biznesradar`` is set and ``symbol`` is a ``.WA`` (Warsaw/WSE) listing,
+    the feature set is enriched from biznesradar.pl: the Piotroski F-Score and Altman
+    EM-Score (no Yahoo equivalent) are added, and ROE / P-B are backfilled when
+    yfinance leaves them null.
+    """
     ticker = get_ticker(symbol)
     info = safe_info(ticker)
     price = last_price(ticker, info)
@@ -297,12 +320,41 @@ def collect_features(symbol):
     if avg_dollar_volume is None and avg_volume and price:
         avg_dollar_volume = float(avg_volume) * float(price)
 
+    # Optional biznesradar enrichment for Warsaw (WSE) listings.
+    piotroski_f = None
+    altman_health = None
+    br_enriched = False
+    br_sources: list[str] = []
+    if use_biznesradar and fetch_biznesradar is not None and symbol.upper().endswith(".WA"):
+        try:
+            br = fetch_biznesradar.collect(symbol)
+        except Exception as exc:  # a scrape failure must never break the screen
+            print(f"  biznesradar {symbol} skipped: {exc}", file=sys.stderr, flush=True)
+            br = None
+        if br:
+            br_enriched = True
+            piotroski_f = br.get("piotroski_f_score")
+            altman_health = br.get("altman_health_score")
+            # Backfill only fields verified consistent with Yahoo (ROE, P/B). NOT P/E:
+            # biznesradar's C/Z is trailing whereas yfinance forwardPE is forward-looking.
+            if roe is None and br.get("roe_pct") is not None:
+                roe = br["roe_pct"]
+                br_sources.append("roe_pct")
+            if pb is None and br.get("pb") is not None:
+                pb = br["pb"]
+                br_sources.append("price_to_book")
+            print(f"  biznesradar {symbol}: F-Score={piotroski_f} altman_health={altman_health}"
+                  f"{' backfilled ' + '+'.join(br_sources) if br_sources else ''}",
+                  file=sys.stderr, flush=True)
+
     return {
         "symbol": symbol,
         "name": info.get("shortName") or info.get("longName"),
         "price": round_or_none(price),
         "currency": info.get("currency"),
         "sector": sector,
+        "biznesradar_enriched": br_enriched,
+        "biznesradar_sourced": br_sources,
         "features": {
             "analyst_upside_pct": round_or_none(upside),
             "pe_forward": round_or_none(pe_fwd),
@@ -313,6 +365,8 @@ def collect_features(symbol):
             "revenue_growth_pct": round_or_none(rev_g),
             "operating_margin_pct": round_or_none(op_margin),
             "gross_margin_pct": round_or_none(gross_margin),
+            "piotroski_f_score": piotroski_f,
+            "altman_health_score": altman_health,
             "recommendation_mean": round_or_none(rec_mean),
             "analyst_opinions": analyst_n,
             "short_interest_pct_float": round_or_none(short_pct),
@@ -420,6 +474,8 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0):
             spctl(f.get("revenue_growth_pct"), "revenue_growth_pct", sector, rev_vals, True),
             spctl(f.get("operating_margin_pct"), "operating_margin_pct", sector, opm_vals, True),
             spctl(f.get("gross_margin_pct"), "gross_margin_pct", sector, gm_vals, True),
+            # Absolute biznesradar quality signal (WSE only; None elsewhere -> skipped).
+            piotroski_score(f.get("piotroski_f_score")),
         ]
         # Trend: momentum is comparable across sectors -> universe-wide. 12m return
         # lives here (it is momentum, not risk).
@@ -439,11 +495,13 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0):
             scale(f.get("analyst_opinions"), 0, 30),
             upctl(f.get("short_interest_pct_float"), short_vals, False),
         ]
-        # Risk: genuine risk only -> volatility (ATR%), drawdown, and beta.
+        # Risk: genuine risk only -> volatility (ATR%), drawdown, beta, plus (WSE only)
+        # the Altman EM-Score as a fundamental-solvency term (higher health = safer).
         risk_parts = [
             sweet_spot_score(f.get("atr_pct_of_price"), target=4, slope=15),
             upctl(f.get("max_drawdown_6m_pct"), max_dd_vals, True),
             upctl(f.get("beta"), beta_vals, False),
+            f.get("altman_health_score"),
         ]
 
         value_s = avg(value_parts)
@@ -515,6 +573,8 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0):
                 "revenue_growth_pct": f.get("revenue_growth_pct"),
                 "operating_margin_pct": f.get("operating_margin_pct"),
                 "gross_margin_pct": f.get("gross_margin_pct"),
+                "piotroski_f_score": f.get("piotroski_f_score"),
+                "altman_health_score": f.get("altman_health_score"),
                 "recommendation_mean": f.get("recommendation_mean"),
                 "analyst_opinions": f.get("analyst_opinions"),
                 "short_interest_pct_float": f.get("short_interest_pct_float"),
@@ -580,6 +640,10 @@ def main():
                         "below it as low_liquidity; with --drop-illiquid also removes them.")
     p.add_argument("--drop-illiquid", action="store_true",
                    help="Exclude names flagged low_liquidity from the ranking.")
+    p.add_argument("--biznesradar", action="store_true",
+                   help="Enrich .WA (Warsaw/WSE) names from biznesradar.pl: adds Piotroski "
+                        "F-Score (quality) + Altman EM-Score (risk) and backfills ROE / P-B "
+                        "when yfinance is null. Adds one cached HTTP scrape per .WA name.")
     args = p.parse_args()
 
     universe = load_universe(args)
@@ -591,7 +655,7 @@ def main():
     for idx, sym in enumerate(universe, start=1):
         print(f"[{idx}/{total}] reviewing {sym}...", file=sys.stderr, flush=True)
         try:
-            rows.append(collect_features(sym))
+            rows.append(collect_features(sym, use_biznesradar=args.biznesradar))
         except Exception as exc:
             print(f"[{idx}/{total}] {sym} failed: {exc}", file=sys.stderr, flush=True)
             rows.append({"symbol": sym, "error": str(exc), "screen_score": None})
@@ -614,11 +678,21 @@ def main():
             f"Small universe ({len(universe)} < {SMALL_UNIVERSE_N}): cross-sectional "
             "percentiles are coarse and shrunk toward 50; treat score gaps as weak signals."
         )
+    if args.biznesradar:
+        n_enriched = sum(1 for r in ranked if r.get("biznesradar_enriched"))
+        warnings.append(
+            f"biznesradar enrichment ON: {n_enriched} .WA name(s) carry a Piotroski F-Score "
+            "(quality) and Altman EM-Score (risk), with ROE/P-B backfilled when yfinance was "
+            "null. These absolute signals apply to WSE names only, so mixed US+WSE runs are "
+            "less comparable across markets. biznesradar's P/E (C/Z) is trailing and is NOT "
+            "used as a forward-P/E fallback."
+        )
 
     hw = HORIZON_WEIGHTS[args.horizon]
     emit({
         "universe_size": len(universe),
         "horizon": args.horizon,
+        "biznesradar_enrichment": bool(args.biznesradar),
         "pillar_weights": {k: round(v, 2) for k, v in hw.items()},
         "score_basis": "universe_relative_percentile",
         "comparability": (
