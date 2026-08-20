@@ -103,6 +103,14 @@ def load_candidates(obj) -> list[dict]:
             "currency": r.get("currency"),
             "score": score,
             "atr": r.get("atr"),
+            "atr_pct_of_price": (
+                r.get("atr_pct_of_price")
+                or (r.get("signals") or {}).get("atr_pct_of_price")
+            ),
+            "sector": (
+                r.get("sector")
+                or (data_quality.get("sector") if isinstance(data_quality, dict) else None)
+            ),
             "value_score": r.get("value_score"),
             "quality_score": r.get("quality_score"),
             "trend_score": r.get("trend_score", r.get("momentum_score")),
@@ -258,6 +266,86 @@ def apply_weight_cap(weights: dict[str, float], cap: float) -> dict[str, float]:
     return w
 
 
+def compute_vol_tilt(candidates: list[dict], vol_power: float = 0.0) -> list[dict]:
+    """Optionally modulate allocation scores by inverse-ATR%.
+
+    Higher vol_power penalises volatile names more.  A vol_power of 0.0 is a
+    no-op (no tilt).  A typical mild value is 0.3–0.5.
+
+    modulated = allocation_score * (median_atr_pct / atr_pct)**vol_power
+    """
+    if vol_power <= 0:
+        return candidates
+
+    atr_pcts = []
+    for c in candidates:
+        atr = c.get("atr_pct_of_price") or c.get("atr_pct")
+        if atr is not None and atr > 0:
+            atr_pcts.append(float(atr))
+
+    if not atr_pcts:
+        return candidates
+
+    median_atr = sorted(atr_pcts)[len(atr_pcts) // 2]
+
+    tilted = []
+    for c in candidates:
+        atr = c.get("atr_pct_of_price") or c.get("atr_pct")
+        if atr is None or atr <= 0 or median_atr <= 0:
+            tilt_mult = 1.0
+            tilt_source = "no_atr"
+        else:
+            tilt_mult = (median_atr / float(atr)) ** vol_power
+            tilt_source = f"vol_tilt_x{tilt_mult:.2f}"
+
+        orig = c.get("allocation_score")
+        new_score = float(orig) * tilt_mult if orig is not None else None
+        tilted.append({
+            **c,
+            "allocation_score": new_score,
+            "allocation_score_source": (
+                f"{c.get('allocation_score_source','')}+{tilt_source}"
+            ),
+            "vol_tilt_multiplier": round_or_none(tilt_mult, 4),
+        })
+    return tilted
+
+
+def sector_concentration_warnings(
+    allocations: list[dict], by_symbol: dict, budget: float, max_sector_pct: float = 40.0
+) -> list[dict]:
+    """Warn when any sector exceeds max_sector_pct of deployed capital."""
+    sectors: dict[str, float] = {}
+    by_sector_names: dict[str, list[str]] = {}
+    for a in allocations:
+        sym = a["symbol"]
+        sector = by_symbol.get(sym, {}).get("sector") or "Unknown"
+        cost = float(a.get("cost_pln") or a.get("cost", 0))
+        sectors[sector] = sectors.get(sector, 0.0) + cost
+        by_sector_names.setdefault(sector, []).append(sym)
+
+    warnings = []
+    deployed = sum(sectors.values())
+    if deployed <= 0:
+        return warnings
+
+    for sector, cost in sorted(sectors.items(), key=lambda kv: -kv[1]):
+        pct = cost / deployed * 100
+        if pct > max_sector_pct:
+            names = ", ".join(by_sector_names[sector])
+            warnings.append({
+                "sector": sector,
+                "weight_pct": round(pct, 1),
+                "names": names,
+                "message": (
+                    f"Sector '{sector}' is {pct:.0f}% of deployed capital "
+                    f"(threshold: {max_sector_pct:.0f}%). "
+                    f"Consider dropping the lowest-scored name from this sector."
+                ),
+            })
+    return warnings
+
+
 def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
              min_score: float = 0.0, top: int = 0, score_power: float = 1.5,
              reserve_pct: float = 0.0, sweep: bool = True,
@@ -265,9 +353,12 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
              usdpln: float | None = None,
              eurpln: float | None = None,
              min_fractional_share: float = 0.5,
+             min_pos_pct: float = 0.0,
              use_component_scores: bool = True,
              apply_confidence: bool = True,
              confidence_floor: float = 0.7,
+             vol_power: float = 0.0,
+             max_sector_pct: float = 40.0,
              value_weight: float = 0.20,
              quality_weight: float = 0.20,
              trend_weight: float = 0.30,
@@ -298,10 +389,26 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         c2 = {**c, "allocation_score": alloc_score, "allocation_score_source": score_source}
         enriched.append(c2)
 
+    # --- optional volatility-aware tilt ---
+    enriched = compute_vol_tilt(enriched, vol_power)
+
     usable = [c for c in enriched
               if c.get("price_pln") and c.get("allocation_score") is not None and c["price_pln"] > 0
               and c["allocation_score"] >= min_score]
     usable.sort(key=lambda c: c["allocation_score"], reverse=True)
+
+    # --- min position-size filter (before round-down) ---
+    dropped_min_pos: list[str] = []
+    if min_pos_pct > 0 and usable:
+        min_value = budget * (min_pos_pct / 100.0)
+        filtered = []
+        for c in usable:
+            if float(c["price_pln"]) >= min_value:
+                filtered.append(c)
+            else:
+                dropped_min_pos.append(c["symbol"])
+        usable = filtered
+
     if top:
         usable = usable[:top]
 
@@ -318,9 +425,11 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
             "cash_reserve_pct": round(reserve_pct * 100, 1),
             "leftover_sweep": sweep,
             "min_fractional_share": round_or_none(min_fractional_share),
+            "min_pos_pct": round_or_none(min_pos_pct),
             "use_component_scores": use_component_scores,
             "apply_confidence": apply_confidence,
             "confidence_floor": round_or_none(confidence_floor),
+            "vol_power": round_or_none(vol_power),
             "allocation_weight_source": weight_source,
             "allocation_weights": {
                 "value": round_or_none(value_weight),
@@ -449,9 +558,15 @@ def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
         "cash_pct": round_or_none((budget - deployed) / budget * 100) if budget else None,
         "num_positions": len(allocs),
         "dropped_below_one_share": dropped,
+        "dropped_below_min_position": dropped_min_pos,
         "rounded_up_to_one_share": sorted(rounded_up_buys),
         "rounded_up_but_trimmed": sorted(rounded_up_dropped),
     }
+
+    # --- sector concentration check ---
+    conc_warnings = sector_concentration_warnings(allocs, by_symbol, budget, max_sector_pct)
+    if conc_warnings:
+        summary["concentration_warnings"] = conc_warnings
 
     if holdings:
         held = {h.get("symbol"): float(h.get("value") or 0) for h in holdings}
@@ -550,6 +665,15 @@ def main() -> None:
                    help="Allocation component weight: sentiment")
     p.add_argument("--w-risk", type=float, default=None,
                    help="Allocation component weight: risk")
+    p.add_argument("--vol-power", type=float, default=0.0,
+                   help="Volatility tilt: higher penalises high-ATR names. 0 = off (default). "
+                        "A mild tilt is 0.3-0.5.")
+    p.add_argument("--max-sector-pct", type=float, default=40.0,
+                   help="Warn when any sector exceeds this percentage of deployed capital "
+                        "(default 40).")
+    p.add_argument("--min-pos-pct", type=float, default=0.0,
+                   help="Drop candidates whose single-share price is below this percentage of "
+                        "budget (default 0 = no filter).")
     args = p.parse_args()
 
     if args.candidates_file:
@@ -569,9 +693,12 @@ def main() -> None:
         top=args.top, score_power=args.score_power, reserve_pct=args.reserve_pct,
         sweep=not args.no_sweep, holdings=holdings, usdpln=args.usdpln, eurpln=args.eurpln,
         min_fractional_share=args.min_fractional_share,
+        min_pos_pct=args.min_pos_pct,
         use_component_scores=not args.use_legacy_score,
         apply_confidence=not args.no_confidence,
         confidence_floor=args.confidence_floor,
+        vol_power=args.vol_power,
+        max_sector_pct=args.max_sector_pct,
         value_weight=weights["value"],
         quality_weight=weights["quality"],
         trend_weight=weights["trend"],

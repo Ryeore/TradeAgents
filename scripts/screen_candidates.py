@@ -393,13 +393,18 @@ def collect_features(symbol, use_biznesradar=False):
     }
 
 
-def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0):
+def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0,
+                    cost_basis: dict[str, float] | None = None):
     """Score candidates with horizon-weighted value/quality/trend/sentiment/risk pillars.
 
     Value/quality features are ranked sector-neutrally (within-sector when enough
     peers exist), percentiles are shrunk toward 50 for tiny universes, the
     missing-data confidence penalty is market-aware (US-only fields don't punish
     non-US listings), and each name gets a liquidity flag.
+
+    When ``cost_basis`` is provided, held names trading below their average cost
+    receive a quality-pillar boost proportional to the discount (up to +15 pts)
+    and are flagged with ``held`` and ``discount_to_cost_pct``.
     """
     hw = HORIZON_WEIGHTS.get(horizon, HORIZON_WEIGHTS[DEFAULT_HORIZON])
     universe = [row.get("features", {}) for row in collected_rows]
@@ -510,6 +515,21 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0):
         sentiment_s = avg(sentiment_parts)
         risk_s = avg(risk_parts)
 
+        # --- discount-to-cost-basis boost for held names "on sale" ---
+        held = False
+        discount_pct = None
+        discount_bonus = None
+        if cost_basis and row.get("symbol") in cost_basis:
+            held = True
+            avg_cost = cost_basis[row["symbol"]]
+            cur_price = row.get("price")
+            if avg_cost and cur_price and avg_cost > 0:
+                discount_pct = round((avg_cost - cur_price) / avg_cost * 100, 1)
+                # Bonus: 0 at <=0% discount, +15 pts at >=30% discount (linear).
+                if discount_pct > 0:
+                    discount_bonus = round(min(discount_pct / 30.0 * 15.0, 15.0), 1)
+                    quality_parts.append(discount_bonus)
+
         weighted_parts = [
             (value_s, hw["value"]),
             (quality_s, hw["quality"]),
@@ -563,6 +583,9 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0):
             "sentiment_score": sentiment_s,
             "risk_score": risk_s,
             "low_liquidity": low_liquidity,
+            "held": held,
+            "discount_to_cost_pct": discount_pct,
+            "discount_quality_bonus": discount_bonus,
             "signals": {
                 "analyst_upside_pct": f.get("analyst_upside_pct"),
                 "pe_forward": f.get("pe_forward"),
@@ -644,6 +667,9 @@ def main():
                    help="Enrich .WA (Warsaw/WSE) names from biznesradar.pl: adds Piotroski "
                         "F-Score (quality) + Altman EM-Score (risk) and backfills ROE / P-B "
                         "when yfinance is null. Adds one cached HTTP scrape per .WA name.")
+    p.add_argument("--portfolio-file", help="JSON file with average purchase prices: "
+                   "[{Ticker, AveragePurchasePricePLN}] or [{symbol, avg}]. Held names "
+                   "trading below cost get a quality-pillar bonus (+15 pts max).")
     args = p.parse_args()
 
     universe = load_universe(args)
@@ -660,7 +686,24 @@ def main():
             print(f"[{idx}/{total}] {sym} failed: {exc}", file=sys.stderr, flush=True)
             rows.append({"symbol": sym, "error": str(exc), "screen_score": None})
 
-    rows = score_candidates(rows, horizon=args.horizon, min_adv=args.min_adv)
+    cost_basis = None
+    if args.portfolio_file:
+        import json as _json
+        with open(args.portfolio_file, "r", encoding="utf-8") as _fh:
+            pf = _json.load(_fh)
+        cost_basis = {}
+        for entry in pf:
+            sym = entry.get("Ticker") or entry.get("symbol")
+            avg = entry.get("AveragePurchasePricePLN") or entry.get("avg")
+            if sym and avg:
+                cost_basis[sym.upper()] = float(avg)
+        if cost_basis:
+            print(f"  loaded cost basis for {len(cost_basis)} holdings: "
+                  f"{', '.join(sorted(cost_basis))}",
+                  file=sys.stderr, flush=True)
+
+    rows = score_candidates(rows, horizon=args.horizon, min_adv=args.min_adv,
+                           cost_basis=cost_basis)
 
     if args.drop_illiquid:
         rows = [r for r in rows if not r.get("low_liquidity")]

@@ -63,6 +63,12 @@ python scripts/screen_candidates.py --preset wse --top 8 --horizon short > scree
 
 # Enrich WSE (.WA) names with biznesradar.pl (Piotroski F-Score + Altman EM-Score; opt-in)
 python scripts/screen_candidates.py --preset wse --top 8 --biznesradar > screen.json
+
+# Screen with cost-basis awareness — held names trading below your average purchase
+# price get a quality-pillar bonus (0–15 pts, linear from 0–30% discount).
+# cost_basis.json format: [{"symbol": "KRU.WA", "avg": 444.10}, ...]
+python scripts/screen_candidates.py --preset wse --top 12 \
+    --portfolio-file cost_basis.json > screen.json
 ```
 
 ### Enrich WSE names with biznesradar (optional)
@@ -230,6 +236,9 @@ automatic buy. Every field the screener emits is described below.
 | `sentiment_score` | 0–100 | Sentiment pillar (universe-wide). Weight varies by horizon. |
 | `risk_score` | 0–100 | Risk pillar (universe-wide). Weight varies by horizon. |
 | `low_liquidity` | bool | `true` when average daily turnover is below the liquidity floor (per-currency default, or `--min-adv`). |
+| `held` | bool | `true` when this ticker is in the `--portfolio-file` cost-basis list. |
+| `discount_to_cost_pct` | % | Discount vs. your average purchase price: `(avg_cost − price) / avg_cost × 100`. Positive = below your cost (on sale), negative = above your cost. |
+| `discount_quality_bonus` | pts | Quality-pillar bonus awarded when the name is held and trading below cost: 0–15 pts linear from 0–30% discount. |
 
 Each pillar is the average of several 0–100 sub-scores. A `null` pillar means
 every input for that pillar was missing; missing pillars are dropped and the
@@ -378,6 +387,9 @@ How allocation uses that score:
 Useful allocator switches:
 
 - `--horizon {short,medium,long}`: weight the allocation pillars for a horizon.
+- `--vol-power 0.3`: inverse-ATR tilt — penalise high-volatility names (-0 = off, mild 0.3–0.5).
+- `--max-sector-pct 40`: warn when any sector exceeds this % of deployed capital.
+- `--min-pos-pct 0`: drop candidates whose single-share price is below this % of budget.
 - `--use-legacy-score`: disable component mode and use legacy score fields only.
 - `--no-confidence`: disable confidence-based penalty/adjustment.
 - `--confidence-floor 0.7`: minimum confidence multiplier.
@@ -401,6 +413,8 @@ How to read the portfolio allocation output:
   - `fx_eurpln`: EUR→PLN rate used to convert euro-denominated tickers before sizing.
   - `max_weight_pct`, `min_score`, `top`, `score_power`, `cash_reserve_pct`,
     `leftover_sweep`: allocation controls.
+  - `vol_power`: volatility tilt strength (0 = off). Higher penalises high-ATR names.
+  - `min_pos_pct`: minimum position-size filter (% of budget).
   - `allocation_weights` + `allocation_weight_source`: the value/quality/trend/
     sentiment/risk weights used to build each `allocation_score`, and where they
     came from (`screener_payload:<horizon>`, `horizon:<h>`, `flags`, or `default`).
@@ -422,7 +436,10 @@ How to read the portfolio allocation output:
   - `actual_weight_pct`: realized portfolio weight after rounding.
 - `summary`: total `deployed`, `leftover_cash`, `cash_pct`, number of
   positions, names dropped because they were too expensive to buy even
-  one share, and which names were rounded up or trimmed.
+  one share (`dropped_below_one_share`), names dropped by `--min-pos-pct`
+  (`dropped_below_min_position`), which names were rounded up or trimmed,
+  and optional `concentration_warnings` when a sector exceeds
+  `--max-sector-pct` of deployed capital.
 
 Example interpretation of a sample row:
 

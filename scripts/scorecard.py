@@ -55,6 +55,14 @@ def main() -> None:
 
     composite = round(sum(scores[d] * weights[d] for d in DIMENSIONS), 2)
 
+    warnings = []
+    raw_wsum = sum(args[f"w_{d}"] for d in DIMENSIONS)
+    if abs(raw_wsum - 1.0) > 0.05:
+        warnings.append(
+            f"User-supplied weights sum to {raw_wsum:.3f} (expected ~1.0). "
+            "Weights were normalized; check for typos or missing dimensions."
+        )
+
     emit({
         "scores": {d: round(scores[d], 1) for d in DIMENSIONS},
         "weights": {d: round(weights[d], 3) for d in DIMENSIONS},
@@ -69,6 +77,7 @@ def main() -> None:
             "1-2": "Severe red flag on this dimension.",
         },
         "note": "Feed composite_score into position_sizer.py as --conviction.",
+        "warnings": warnings,
     })
 
 

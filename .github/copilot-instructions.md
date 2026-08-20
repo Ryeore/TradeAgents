@@ -204,7 +204,7 @@ Every agent that outputs a 1–10 sub-score uses this consistent scale:
 The PM runs `position_sizer.py`. Key constraints that must never be violated:
 
 - **Max risk per trade**: 1% of account value (default; user can override).
-- **Max position size**: 10% of account value (conviction-capped).
+- **Max position size**: 12% of account value (conviction-capped).
 - **Stop loss**: ATR × 2.0 below entry (default multiplier; adjustable).
 - **DCA tranches**: 3 tranches default; tranche step = 0.5 × ATR.
 - **Target 1 (T1)**: 2R above entry — trim 50%, move stop to breakeven.
@@ -296,10 +296,13 @@ Args: `--preset` (`wse`, `us100`, `all`, `current_portfolio`, `current_pl`) OR
 `--universe FILE` OR explicit tickers, `--top N`, `--min-score N`,
 `--horizon {short,medium,long}` (default `long`), `--min-adv N` (liquidity floor in
 the listing currency), `--drop-illiquid`, `--biznesradar` (opt-in WSE enrichment,
-default off).
+default off), `--portfolio-file` (opt-in cost-basis JSON: `[{symbol, avg}]` — held
+names trading below cost get a quality-pillar bonus of 0–15 pts linear from 0–30%
+discount).
 Returns ranked JSON per name: `screen_score` (0–100), `raw_screen_score`,
 `confidence_score`, `value_score`, `quality_score`, `trend_score`
-(+ `momentum_score` alias), `sentiment_score`, `risk_score`, `low_liquidity`, raw
+(+ `momentum_score` alias), `sentiment_score`, `risk_score`, `low_liquidity`,
+`held` (bool), `discount_to_cost_pct` (%), `discount_quality_bonus` (pts), raw
 `signals` (incl. `beta`, `avg_dollar_volume`, plus `piotroski_f_score` +
 `altman_health_score` under `--biznesradar`), and `data_quality`
 (`coverage_ratio`, `sector`, `low_liquidity`). Under `--biznesradar` each row also
@@ -339,30 +342,37 @@ Consumed by `screen_candidates.py --biznesradar`; caches to
 Args: `--budget` (PLN) + `--candidates-file`/`--candidates-json` (screener output
 or `[{symbol,price,score}]`); optional `--holdings-file`, `--top N`, `--min-score N`,
 `--max-weight` (default 0.35), `--score-power` (default 1.5), `--reserve-pct`,
-`--no-sweep`, `--min-fractional-share` (default 0.5), `--usdpln`/`--eurpln`,
-`--use-legacy-score`, `--no-confidence`, `--confidence-floor` (default 0.7),
-`--horizon {short,medium,long}`, `--w-value/-quality/-trend/-sentiment/-risk`.
+`--no-sweep`, `--min-fractional-share` (default 0.5), `--min-pos-pct` (default 0,
+drops candidates below this % of budget), `--vol-power` (default 0, inverse-ATR tilt),
+`--max-sector-pct` (default 40, warns when sector exceeds this % of deployed capital),
+`--usdpln`/`--eurpln`, `--use-legacy-score`, `--no-confidence`,
+`--confidence-floor` (default 0.7), `--horizon {short,medium,long}`,
+`--w-value/-quality/-trend/-sentiment/-risk`.
 Component-weight precedence: explicit `--w-*` > `--horizon` > the screener
 payload's `pillar_weights` (so allocation honors the horizon the screen ranked at)
 > builtin 20/20/30/20/10. Reported as `params.allocation_weight_source`.
 Returns `allocations[]` (whole shares, `target_weight_pct`, `actual_weight_pct`,
-`cost_pln`) and `summary` (`deployed`, `leftover_cash`, dropped/rounded names,
-optional `portfolio_after_deploy`). Budget is PLN; USD/EUR prices converted via FX.
+`cost_pln`, `vol_tilt_multiplier`) and `summary` (`deployed`, `leftover_cash`,
+`dropped_below_one_share`, `dropped_below_min_position`, dropped/rounded names,
+optional `concentration_warnings[]` and `portfolio_after_deploy`). Budget is PLN;
+USD/EUR prices converted via FX.
 
 ### scorecard.py
 Args: `--valuation`, `--quality`, `--technical`, `--sentiment`, `--macro`
 (all 1–10). Optional `--w-*` weight overrides.
 Default weights: valuation 25%, quality 25%, technical 20%, sentiment 15%, macro 15%.
-Returns: `composite_score`, `verdict_band`, `weighted_breakdown` table.
+Returns: `composite_score`, `verdict_band`, `weighted_breakdown` table,
+`warnings` (fires when user-supplied weights sum outside 0.95–1.05).
 
 ### position_sizer.py
 Args: `--price`, `--atr`, `--conviction`, `--account`.
-Optional: `--risk-pct` (default 0.01), `--max-pos-pct` (default 0.10),
+Optional: `--risk-pct` (default 1.0), `--max-pos-pct` (default 12.0),
 `--atr-stop-mult` (default 2.0), `--tranches` (default 3),
 `--tranche-step-atr` (default 0.5), `--t1-r` (default 2.0),
 `--t2-r` (default 4.0).
 Returns: `shares`, `position_value`, `position_pct`, `risk_dollars`,
-`stop_price`, `t1_price`, `t2_price`, `dca_tranches[]`, `binding_constraint`.
+`stop_price`, `t1_price`, `t2_price`, `dca_tranches[]`, `binding_constraint`,
+`warnings` (fires when T2 ≤ T1 or T1 ≤ stop).
 
 ---
 

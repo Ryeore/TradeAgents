@@ -134,10 +134,22 @@ def main() -> None:
             "target2": {"price": target2, "r_multiple": args.t2_r,
                         "action": "trim remainder or trail stop"},
         },
+        "warnings": [],
         "note": "Size is the MIN of risk-based and conviction-capped shares so a stop-out "
                 "never exceeds your risk budget. Tranche prices are limit orders; cancel "
                 "lower tranches if the thesis breaks.",
     }
+    # Validate that profit targets are outside the stop zone.
+    if target1 <= stop_price:
+        payload["warnings"].append(
+            f"T1 ({target1}) <= stop ({stop_price}). "
+            "Consider increasing --t1-r or reducing --atr-stop-mult."
+        )
+    if target2 <= target1:
+        payload["warnings"].append(
+            f"T2 ({target2}) <= T1 ({target1}). "
+            "Consider increasing --t2-r above --t1-r."
+        )
     if tranche_spacing_note:
         payload["dca_note"] = tranche_spacing_note
     emit(payload)
