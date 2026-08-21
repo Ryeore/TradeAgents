@@ -335,14 +335,22 @@ def collect_features(symbol, use_biznesradar=False):
             br_enriched = True
             piotroski_f = br.get("piotroski_f_score")
             altman_health = br.get("altman_health_score")
-            # Backfill only fields verified consistent with Yahoo (ROE, P/B). NOT P/E:
-            # biznesradar's C/Z is trailing whereas yfinance forwardPE is forward-looking.
+            # Backfill ROE / P-B when yfinance is null (verified consistent).
             if roe is None and br.get("roe_pct") is not None:
                 roe = br["roe_pct"]
                 br_sources.append("roe_pct")
             if pb is None and br.get("pb") is not None:
                 pb = br["pb"]
                 br_sources.append("price_to_book")
+            # Backfill P/E when yfinance forwardPE is null. biznesradar's C/Z
+            # (trailing) is not a perfect substitute for forward P/E, but is
+            # far better than leaving the critical field null, which triggers
+            # a confidence penalty. Flagged as biznesradar-sourced so the
+            # confidence system can apply appropriate quality/reliability
+            # adjustments for a secondary trailing-P/E source.
+            if pe_fwd is None and br.get("pe") is not None:
+                pe_fwd = br["pe"]
+                br_sources.append("pe_trailing_as_forward")
             print(f"  biznesradar {symbol}: F-Score={piotroski_f} altman_health={altman_health}"
                   f"{' backfilled ' + '+'.join(br_sources) if br_sources else ''}",
                   file=sys.stderr, flush=True)

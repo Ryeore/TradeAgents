@@ -67,6 +67,7 @@ CONFIDENCE_CONFIG: dict[str, Any] = {
     "source_reliability": {
         "yfinance": 0.80,        # good but can lag / have gaps
         "biznesradar": 0.75,     # WSE specialist but scraped HTML
+        "biznesradar_trailing_pe": 0.65,  # trailing P/E as forward fallback
         "yahoo_analyst": 0.75,   # consensus can be stale
         "derived": 0.60,         # computed from raw data
     },
@@ -386,11 +387,21 @@ def pillar_quality(
         if isinstance(val, (int, float)) and abs(val) < 1e-9:
             base_quality = 0.3
 
-        # Bonus for biznesradar corroboration (independent source)
+        # Source-based quality adjustments
         sourced = biznesradar_sourced or []
-        if biznesradar_enriched and field in ("roe_pct", "price_to_book") and field in sourced:
-            # Two independent sources agree — quality boost
-            base_quality = min(1.0, base_quality + 0.10)
+        if biznesradar_enriched:
+            if field in ("roe_pct", "price_to_book") and field in sourced:
+                # Two independent sources corroborate — quality boost
+                base_quality = min(1.0, base_quality + 0.10)
+            elif field == "pe_forward" and "pe_trailing_as_forward" in sourced:
+                # biznesradar trailing P/E used as forward P/E fallback.
+                # Useful but lower quality than native forward P/E (trailing != forward).
+                # Better than null (which triggers critical penalty), but not as good
+                # as native yfinance forwardPE.
+                base_quality = 0.70
+            elif field in sourced:
+                # Generic biznesradar fallback — reasonably reliable
+                base_quality = 0.75
 
         total_weight += weight
         weighted_quality += base_quality * weight
@@ -405,6 +416,7 @@ def pillar_source_reliability(
     features: dict[str, Any],
     pillar: str,
     biznesradar_enriched: bool = False,
+    biznesradar_sourced: list[str] | None = None,
     config: dict | None = None,
 ) -> float:
     """Estimate source reliability for a pillar's data.
@@ -424,7 +436,11 @@ def pillar_source_reliability(
     weighted_rel = 0.0
 
     for field, weight in field_weights.items():
-        source = FIELD_SOURCE.get(field, DEFAULT_FIELD_SOURCE)
+        # Determine effective source for this field
+        if biznesradar_enriched and field == "pe_forward" and "pe_trailing_as_forward" in (biznesradar_sourced or []):
+            source = "biznesradar_trailing_pe"
+        else:
+            source = FIELD_SOURCE.get(field, DEFAULT_FIELD_SOURCE)
         rel = source_rels.get(source, 0.7)
 
         # Boost slightly if biznesradar enrichment is active (dual source)
@@ -461,7 +477,7 @@ def pillar_confidence(
     historical = pillar_historical_depth(features, pillar, cfg)
     freshness = pillar_freshness(features, pillar, cfg)
     quality = pillar_quality(features, pillar, biznesradar_enriched, biznesradar_sourced, cfg)
-    source = pillar_source_reliability(features, pillar, biznesradar_enriched, cfg)
+    source = pillar_source_reliability(features, pillar, biznesradar_enriched, biznesradar_sourced, cfg)
 
     # Weighted blend
     w_comp = cfg.get("completeness_weight", 0.35)
