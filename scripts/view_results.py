@@ -89,24 +89,29 @@ def render_screen(screen: dict, top: int) -> tuple[str, str]:
     ranked = ranked[:top] if top > 0 else ranked
 
     headers = [
-        "Rank", "Symbol", "Score", "Trend", "Sent", "Risk", "Conf", "Flag"
+        "Rank", "Symbol", "Score", "AdjScr", "Conf", "Level", "Missing"
     ]
     rows: list[list[str]] = []
     for i, r in enumerate(ranked, start=1):
+        conf = r.get("confidence_score")
+        level = str(r.get("confidence_level") or "-")
+        missing = r.get("missing_critical") or []
+        missing_str = ",".join(missing[:3]) if missing else "-"
         rows.append([
             str(i),
             str(r.get("symbol") or "-"),
+            fmt_num(r.get("raw_screen_score")),
             fmt_num(r.get("screen_score")),
-            fmt_num(r.get("trend_score", r.get("momentum_score"))),
-            fmt_num(r.get("sentiment_score")),
-            fmt_num(r.get("risk_score")),
-            fmt_num(r.get("confidence_score"), suffix="%"),
-            trend_emoji(r.get("trend_score", r.get("momentum_score"))),
+            fmt_num(conf, suffix="%"),
+            level,
+            missing_str,
         ])
 
     terminal = []
     terminal.append("SCREEN DASHBOARD")
     terminal.append(f"Universe: {screen.get('universe_size', '-')}  |  Showing: {len(rows)}")
+    terminal.append("")
+    terminal.append("Score = raw attractiveness | AdjScr = confidence-adjusted | Conf = evidence strength")
     terminal.append(to_table(headers, rows) if rows else "No ranked rows found.")
 
     md = []
@@ -115,11 +120,43 @@ def render_screen(screen: dict, top: int) -> tuple[str, str]:
     md.append(f"- Universe size: {screen.get('universe_size', '-')}")
     md.append(f"- Rows shown: {len(rows)}")
     md.append("")
-    md.append("| Rank | Symbol | Score | Trend | Sent | Risk | Conf | Flag |")
-    md.append("|---:|:---|---:|---:|---:|---:|---:|:---:|")
-    for r in rows:
-        md.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[4]} | {r[5]} | {r[6]} | {r[7]} |")
+    md.append("*Score = raw attractiveness • AdjScr = confidence-adjusted • Conf = evidence strength*")
     md.append("")
+    md.append("| Rank | Symbol | Raw Score | Adj Score | Confidence | Level | Missing Critical |")
+    md.append("|---:|:---|---:|---:|---:|:---|:---|")
+    for r in rows:
+        md.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[4]} | {r[5]} | {r[6]} |")
+    md.append("")
+
+    # Add confidence detail section
+    if ranked:
+        md.append("## Confidence Details")
+        md.append("")
+        for i, r in enumerate(ranked, start=1):
+            sym = r.get("symbol", "-")
+            explanations = r.get("confidence_explanations") or []
+            pillar_conf = r.get("pillar_confidence") or {}
+            if explanations:
+                md.append(f"### {i}. {sym} — {r.get('confidence_level', '-')} ({fmt_num(r.get('confidence_score'), suffix='%')})")
+                md.append("")
+                for exp in explanations:
+                    md.append(f"- {exp}")
+                if pillar_conf:
+                    md.append("")
+                    md.append("| Pillar | Overall | Completeness | History | Freshness | Quality | Source |")
+                    md.append("|---|---:|---:|---:|---:|---:|")
+                    for p, pc in pillar_conf.items():
+                        md.append(
+                            f"| {p} | {fmt_num(pc.get('overall'), suffix='%')} | "
+                            f"{fmt_num(pc.get('completeness'), suffix='%')} | "
+                            f"{fmt_num(pc.get('historical_depth'), suffix='%')} | "
+                            f"{fmt_num(pc.get('freshness'), suffix='%')} | "
+                            f"{fmt_num(pc.get('quality'), suffix='%')} | "
+                            f"{fmt_num(pc.get('source_reliability'), suffix='%')} |"
+                        )
+                md.append("")
+        md.append("")
+
     return "\n".join(terminal), "\n".join(md)
 
 

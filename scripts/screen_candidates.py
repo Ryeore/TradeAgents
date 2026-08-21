@@ -544,26 +544,23 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0,
         else:
             raw_score = None
 
-        # Market-aware confidence: short interest is a US-only field, so it is not
-        # required for non-US listings (otherwise every WSE name eats a flat
-        # penalty for a field Yahoo never provides).
+        # --- Multi-dimensional confidence scoring ---
+        # Uses lib/confidence.py to compute a rich confidence score that
+        # considers: weighted completeness per pillar, historical depth,
+        # data freshness, source reliability, data quality, and critical
+        # field penalties. Market-aware (short interest not required for
+        # non-US listings). Replaces the old flat MISSING_DATA_DECAY model.
         is_us = is_us_listing(row.get("symbol"))
-        required_features = [
-            f.get("analyst_upside_pct"), f.get("pe_forward"), f.get("price_to_book"),
-            f.get("roe_pct"), f.get("revenue_growth_pct"), f.get("return_3m_pct"),
-            f.get("return_6m_pct"), f.get("rsi14"), f.get("ma50"), f.get("ma200"),
-            f.get("recommendation_mean"), f.get("atr_pct_of_price"),
-        ]
-        if is_us:
-            required_features.append(f.get("short_interest_pct_float"))
-        present = sum(1 for x in required_features if x is not None)
-        missing = len(required_features) - present
-        coverage_ratio = present / len(required_features) if required_features else 0.0
-        # Exponential missing-data penalty: each absent input compounds the
-        # penalty (score *= MISSING_DATA_DECAY per gap), so sparse-data names
-        # decay steeply. Full coverage leaves the score untouched.
-        confidence_multiplier = MISSING_DATA_DECAY ** missing
-        screen_score = round(raw_score * confidence_multiplier, 1) if raw_score is not None else None
+        # Import confidence module dynamically (avoid circular deps)
+        from lib.confidence import compute_confidence, confidence_adjust  # noqa: E402
+        confidence_result = compute_confidence(
+            f,
+            is_us=is_us,
+            biznesradar_enriched=row.get("biznesradar_enriched", False),
+            biznesradar_sourced=row.get("biznesradar_sourced"),
+        )
+        new_confidence_score = confidence_result["confidence_score"]
+        screen_score = confidence_adjust(raw_score, new_confidence_score) if raw_score is not None else None
 
         # Liquidity flag (informational). Floor is the caller's --min-adv when set,
         # else a per-currency soft default in the listing currency.
@@ -575,7 +572,13 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0,
         row.update({
             "screen_score": screen_score,
             "raw_screen_score": round_or_none(raw_score),
-            "confidence_score": round_or_none(coverage_ratio * 100),
+            "confidence_score": new_confidence_score,
+            "confidence_level": confidence_result["confidence_level"],
+            "pillar_confidence": confidence_result["pillar_confidence"],
+            "data_confidence": confidence_result["data_confidence"],
+            "confidence_explanations": confidence_result["confidence_explanations"],
+            "missing_critical": confidence_result.get("missing_critical", []),
+            "missing_data": confidence_result.get("missing_data", []),
             "value_score": value_s,
             "quality_score": quality_s,
             "trend_score": trend_s,
@@ -618,10 +621,10 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0,
                 "avg_dollar_volume": f.get("avg_dollar_volume"),
             },
             "data_quality": {
-                "coverage_ratio": round_or_none(coverage_ratio),
-                "coverage_pct": round_or_none(coverage_ratio * 100),
+                "coverage_pct": new_confidence_score,
                 "sector": sector,
                 "low_liquidity": low_liquidity,
+                "confidence_level": confidence_result["confidence_level"],
             },
         })
         row.pop("features", None)
@@ -751,8 +754,9 @@ def main():
                    f"for horizon '{args.horizon}'. Value/quality use sector-neutral percentiles; "
                    "trend (incl. 3/6/12m returns) and risk (ATR%, drawdown, beta) use universe-wide "
                    "percentiles. Percentiles are shrunk toward 50 for small universes, then the score "
-                   "is confidence-adjusted by data coverage (exponential penalty: multiplier = "
-                   "0.86 ** missing_inputs; short interest is not required for non-US listings). "
+                   "is confidence-adjusted using multi-dimensional evidence quality (completeness, "
+                   "historical depth, freshness, source reliability, data quality, and critical-field "
+                   "penalties). Short interest is not required for non-US listings. "
                    "Momentum_score is a backward-compatible alias of trend_score."),
         "next_step": "Take the top names into data-scout / the analyst-desk for a full work-up. "
                      "Screen score is a coarse filter, NOT a buy signal.",
