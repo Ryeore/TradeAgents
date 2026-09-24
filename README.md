@@ -64,6 +64,10 @@ python scripts/screen_candidates.py --preset wse --top 8 --horizon short > scree
 # Enrich WSE (.WA) names with biznesradar.pl (Piotroski F-Score + Altman EM-Score; opt-in)
 python scripts/screen_candidates.py --preset wse --top 8 --biznesradar > screen.json
 
+# Actionable WSE shortlist: remove illiquid names and limit sector concentration.
+# The rank stays score-driven; the cap only removes lower-ranked sector peers.
+python scripts/screen_candidates.py --preset wse --top 10 --drop-illiquid --max-per-sector 2 > screen.json
+
 # Screen with cost-basis awareness — held names trading below your average purchase
 # price get a quality-pillar bonus (0–15 pts, linear from 0–30% discount).
 # cost_basis.json format: [{"symbol": "KRU.WA", "avg": 444.10}, ...]
@@ -123,7 +127,7 @@ Run workflow**, fill in the parameter boxes, and run:
 | `min_score` | Drop names below this score. |
 | `budget` | Cash to allocate across the shortlist; `0` skips allocation. |
 | `alloc_top` | Allocate across the top N names (used when `budget > 0`). |
-| `max_weight` | Max weight per name for allocation (0–1). |
+| `max_weight` | Max weight per name for allocation (0–1, default 0.5). |
 
 Results appear in the run's **Summary** (rendered dashboard) and as downloadable
 **Artifacts** (`screen.json`, `alloc.json`, `output/dashboard.md`). The workflow
@@ -168,7 +172,7 @@ python scripts/view_results.py --screen-file screen_all.json --allocation-file a
 
 # Current portfolio flow: screen -> allocate -> review
 python scripts/screen_candidates.py --preset current_portfolio --top 12 > screen_current_portfolio.json
-python scripts/portfolio_allocator.py --budget 2000 --candidates-file screen_current_portfolio.json --top 8 > alloc_current_portfolio.json
+python scripts/portfolio_allocator.py --budget 5000 --candidates-file screen_current_portfolio.json --top 8 > alloc_current_portfolio.json
 python scripts/view_results.py --screen-file screen_current_portfolio.json --allocation-file alloc_current_portfolio.json --top 10 --out-md output/dashboard.md
 ```
 
@@ -210,6 +214,8 @@ automatic buy. Every field the screener emits is described below.
 | `ranked` | Ordered candidate list, best `screen_score` first. |
 | `horizon` | Investing horizon used for pillar weighting (`short` / `medium` / `long`, default `long`). |
 | `pillar_weights` | The value/quality/trend/sentiment/risk weights applied for that horizon. |
+| `max_per_sector` | Active post-ranking sector cap, or `null` when no cap was requested. |
+| `excluded_by_sector` | Lower-ranked names removed by `--max-per-sector`; absent sector metadata is never capped. |
 | `score_basis` | How scores are derived (`universe_relative_percentile`). |
 | `comparability` | Caveat: scores are relative to THIS run's universe (value/quality sector-neutral), so they are not comparable across different universes or dates. |
 | `warnings` | Non-fatal warnings, e.g. a too-small universe (<8) where percentiles are coarse. |
@@ -273,6 +279,8 @@ score.
 |---|---|---|---|
 | `roe_pct` | % | higher | Return on equity. |
 | `revenue_growth_pct` | % | higher | Year-over-year revenue growth. |
+| `earnings_growth_pct` | % | higher | Year-over-year EPS growth from yfinance `earningsGrowth`; weighted above most quality factors. |
+| `dividend_growth_pct` | % | higher | Trailing 12-month dividend growth versus the preceding 12 months; weighted above most quality factors. |
 | `operating_margin_pct` | % | higher | Operating margin (an exact 0 — common for banks in yfinance — is treated as N/A). |
 | `gross_margin_pct` | % | higher | Gross margin (an exact 0 — common for banks in yfinance — is treated as N/A). |
 | `piotroski_f_score` | 0–9 | higher | **`--biznesradar` only (WSE).** Piotroski F-Score from biznesradar.pl, added as an absolute `f/9×100` quality sub-score. `null` for banks/financials. |
@@ -522,16 +530,16 @@ component blend (`allocation_score_source = "components+confidence"`), using the
 **`long`-horizon weights inherited from the screener** (`allocation_weight_source =
 "screener_payload:long"`). Its model `target_weight_pct` is only `11.68%`, but after
 whole-share rounding and the leftover-cash sweep it lands at `5` shares × `135.14 PLN`
-= `675.7 PLN`, i.e. an `actual_weight_pct` of `33.78%` — right under the 35% per-name
-cap. That gap between target (12%) and actual (34%) is the sweep concentrating
-unspent budget into the top affordable names. `currency` is `PLN`, so `price_pln`
-equals `price`.
+= `675.7 PLN`, i.e. an `actual_weight_pct` of `33.78%` — still comfortably under the
+50% per-name cap. That gap between target (12%) and actual (34%) is the sweep
+concentrating unspent budget into the top affordable names. `currency` is `PLN`, so
+`price_pln` equals `price`.
 
 Note how the two files connect: `NVDA` wins the *screen* (61.5) yet never makes the
 *allocation* — it sits in `summary.dropped_below_one_share`, because a single share
-(≈ $203.28 × 3.7931 ≈ 771 PLN) blows past the 700 PLN per-name cap (35% of 2000 PLN).
-For a US row, `currency` is `USD`, `price` is in USD, and `price_pln` equals
-`price × fx_usdpln`; sizing and `cost_pln` are always computed in PLN.
+(≈ $203.28 × 3.7931 ≈ 771 PLN) would still be within the 1000 PLN per-name cap (50%
+of 2000 PLN). For a US row, `currency` is `USD`, `price` is in USD, and `price_pln`
+equals `price × fx_usdpln`; sizing and `cost_pln` are always computed in PLN.
 
 Start with `allocations` if you want the actionable result. `target_weight_pct`
 shows the model's ideal weighting before whole-share rounding, while
@@ -539,7 +547,7 @@ shows the model's ideal weighting before whole-share rounding, while
 into buyable share counts.
 
 Weights scale with each name's effective allocation score (`allocation_score ** score_power`), are **capped per
-name** (`--max-weight`, default 35%), converted to **whole shares**, and any
+name** (`--max-weight`, default 50%), converted to **whole shares**, and any
 leftover cash is **swept** into the highest-scored affordable names so the budget
 is actually deployed. In component mode, this score is the computed
 `allocation_score`; in legacy mode, it is the fallback raw score.

@@ -12,6 +12,7 @@ Usage:
 import argparse
 import os
 import sys
+from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.common import (  # noqa: E402
@@ -51,9 +52,9 @@ PRESETS = {
     "us100": _read_watchlist("us100.txt"),
     "all": _read_watchlist("wse_blue.txt") + _read_watchlist("us100.txt"),
     "current_portfolio": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
-                          "MBR.WA", "SNT.WA", "ASB.WA", "NVDA", "AVGO", "MU"],
+                          "MBR.WA", "SNT.WA", "ASB.WA", "NVDA", "AVGO", "MU", "DIG.WA"],
     "current_pl": ["KRU.WA", "XTB.WA", "DIA.WA", "CBF.WA", "ACP.WA", "PKO.WA",
-                          "MBR.WA", "SNT.WA", "ASB.WA"]
+                          "MBR.WA", "SNT.WA", "ASB.WA", "DIG.WA"]
 }
 
 
@@ -149,6 +150,24 @@ def _dividend_yield_pct(info: dict, price: float | None):
     return None
 
 
+def _dividend_growth_pct(ticker) -> float | None:
+    """Return trailing-year dividend growth versus the preceding year."""
+    try:
+        dividends = ticker.dividends
+        if dividends is None or dividends.empty:
+            return None
+        end = dividends.index.max()
+        recent_start = end - timedelta(days=365)
+        prior_start = end - timedelta(days=730)
+        recent = float(dividends[(dividends.index > recent_start) & (dividends.index <= end)].sum())
+        prior = float(dividends[(dividends.index > prior_start) & (dividends.index <= recent_start)].sum())
+        if prior <= 0:
+            return None
+        return round((recent / prior - 1.0) * 100.0, 1)
+    except Exception:
+        return None
+
+
 def _shrink_toward_50(score, shrink: float):
     """Pull a percentile score toward the neutral 50 by `shrink` in (0,1]."""
     if score is None:
@@ -232,8 +251,10 @@ def collect_features(symbol, use_biznesradar=False):
     pe_fwd = info.get("forwardPE")
     pb = info.get("priceToBook")
     div = _dividend_yield_pct(info, price)
+    div_growth = _dividend_growth_pct(ticker)
     roe = _pct(info.get("returnOnEquity"))
     rev_g = _pct(info.get("revenueGrowth"))
+    eps_g = _pct(info.get("earningsGrowth"))
     op_margin = _na_if_zero(_pct(info.get("operatingMargins")))
     gross_margin = _na_if_zero(_pct(info.get("grossMargins")))
     beta = info.get("beta")
@@ -368,9 +389,11 @@ def collect_features(symbol, use_biznesradar=False):
             "pe_forward": round_or_none(pe_fwd),
             "price_to_book": round_or_none(pb),
             "dividend_yield_pct": round_or_none(div),
+            "dividend_growth_pct": div_growth,
             "fcf_yield_pct": round_or_none(fcf_yield),
             "roe_pct": round_or_none(roe),
             "revenue_growth_pct": round_or_none(rev_g),
+            "earnings_growth_pct": round_or_none(eps_g),
             "operating_margin_pct": round_or_none(op_margin),
             "gross_margin_pct": round_or_none(gross_margin),
             "piotroski_f_score": piotroski_f,
@@ -449,11 +472,13 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0,
     pe_vals = vals("pe_forward")
     pb_vals = vals("price_to_book")
     div_vals = vals("dividend_yield_pct")
+    div_growth_vals = vals("dividend_growth_pct")
     fcf_vals = vals("fcf_yield_pct")
     upside_vals = vals("analyst_upside_pct")
 
     roe_vals = vals("roe_pct")
     rev_vals = vals("revenue_growth_pct")
+    eps_vals = vals("earnings_growth_pct")
     opm_vals = vals("operating_margin_pct")
     gm_vals = vals("gross_margin_pct")
 
@@ -487,6 +512,8 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0,
             spctl(f.get("revenue_growth_pct"), "revenue_growth_pct", sector, rev_vals, True),
             spctl(f.get("operating_margin_pct"), "operating_margin_pct", sector, opm_vals, True),
             spctl(f.get("gross_margin_pct"), "gross_margin_pct", sector, gm_vals, True),
+            spctl(f.get("earnings_growth_pct"), "earnings_growth_pct", sector, eps_vals, True),
+            spctl(f.get("dividend_growth_pct"), "dividend_growth_pct", sector, div_growth_vals, True),
             # Absolute biznesradar quality signal (WSE only; None elsewhere -> skipped).
             piotroski_score(f.get("piotroski_f_score")),
         ]
@@ -602,9 +629,11 @@ def score_candidates(collected_rows, horizon=DEFAULT_HORIZON, min_adv=0.0,
                 "pe_forward": f.get("pe_forward"),
                 "price_to_book": f.get("price_to_book"),
                 "dividend_yield_pct": f.get("dividend_yield_pct"),
+                "dividend_growth_pct": f.get("dividend_growth_pct"),
                 "fcf_yield_pct": f.get("fcf_yield_pct"),
                 "roe_pct": f.get("roe_pct"),
                 "revenue_growth_pct": f.get("revenue_growth_pct"),
+                "earnings_growth_pct": f.get("earnings_growth_pct"),
                 "operating_margin_pct": f.get("operating_margin_pct"),
                 "gross_margin_pct": f.get("gross_margin_pct"),
                 "piotroski_f_score": f.get("piotroski_f_score"),
@@ -674,6 +703,9 @@ def main():
                         "below it as low_liquidity; with --drop-illiquid also removes them.")
     p.add_argument("--drop-illiquid", action="store_true",
                    help="Exclude names flagged low_liquidity from the ranking.")
+    p.add_argument("--max-per-sector", type=int, default=0,
+                   help="Keep at most N names per sector after ranking (0 = no cap). "
+                        "Use 2 to create a diversified actionable shortlist.")
     p.add_argument("--biznesradar", action="store_true",
                    help="Enrich .WA (Warsaw/WSE) names from biznesradar.pl: adds Piotroski "
                         "F-Score (quality) + Altman EM-Score (risk) and backfills ROE / P-B "
@@ -723,6 +755,22 @@ def main():
                                          r.get("screen_score") or 0), reverse=True)
     ranked = [r for r in ranked if r.get("screen_score") is None
               or r["screen_score"] >= args.min_score]
+
+    sector_capped: list[dict] = []
+    excluded_by_sector: list[dict[str, str]] = []
+    if args.max_per_sector:
+        sector_counts: dict[str, int] = {}
+        for row in ranked:
+            sector = row.get("sector")
+            if not sector:
+                sector_capped.append(row)
+                continue
+            if sector_counts.get(sector, 0) >= args.max_per_sector:
+                excluded_by_sector.append({"symbol": row.get("symbol"), "sector": sector})
+                continue
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+            sector_capped.append(row)
+        ranked = sector_capped
     if args.top:
         ranked = ranked[:args.top]
 
@@ -741,6 +789,11 @@ def main():
             "less comparable across markets. biznesradar's P/E (C/Z) is trailing and is NOT "
             "used as a forward-P/E fallback."
         )
+    if excluded_by_sector:
+        warnings.append(
+            f"Sector cap (--max-per-sector {args.max_per_sector}) excluded "
+            f"{len(excluded_by_sector)} lower-ranked name(s)."
+        )
 
     hw = HORIZON_WEIGHTS[args.horizon]
     emit({
@@ -748,6 +801,8 @@ def main():
         "horizon": args.horizon,
         "biznesradar_enrichment": bool(args.biznesradar),
         "pillar_weights": {k: round(v, 2) for k, v in hw.items()},
+        "max_per_sector": args.max_per_sector or None,
+        "excluded_by_sector": excluded_by_sector,
         "score_basis": "universe_relative_percentile",
         "comparability": (
             "Value/quality are ranked sector-neutrally (within-sector when >= "

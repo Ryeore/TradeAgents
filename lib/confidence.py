@@ -103,10 +103,12 @@ PILLAR_FIELDS: dict[str, dict[str, float]] = {
         "fcf_yield_pct": 0.15,
     },
     "quality": {
-        "roe_pct": 0.30,
-        "revenue_growth_pct": 0.25,
-        "operating_margin_pct": 0.25,
-        "gross_margin_pct": 0.20,
+        "roe_pct": 0.25,
+        "revenue_growth_pct": 0.10,
+        "earnings_growth_pct": 0.25,
+        "dividend_growth_pct": 0.20,
+        "operating_margin_pct": 0.10,
+        "gross_margin_pct": 0.10,
         # piotroski_f_score is optional (WSE only) — not required
     },
     "trend": {

@@ -48,6 +48,8 @@ ALL_FEATURES = {
     "fcf_yield_pct": 4.2,
     "roe_pct": 35.0,
     "revenue_growth_pct": 15.0,
+    "earnings_growth_pct": 18.0,
+    "dividend_growth_pct": 8.0,
     "operating_margin_pct": 28.0,
     "gross_margin_pct": 55.0,
     "return_3m_pct": 8.0,

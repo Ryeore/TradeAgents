@@ -346,7 +346,7 @@ def sector_concentration_warnings(
     return warnings
 
 
-def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.35,
+def allocate(budget: float, candidates: list[dict], *, max_weight: float = 0.5,
              min_score: float = 0.0, top: int = 0, score_power: float = 1.5,
              reserve_pct: float = 0.0, sweep: bool = True,
              holdings: list[dict] | None = None,
@@ -631,7 +631,7 @@ def main() -> None:
     src.add_argument("--candidates-file", help="JSON file: candidate list or screener output")
     src.add_argument("--candidates-json", help="JSON string: candidate list or screener output")
     p.add_argument("--holdings-file", help="JSON file: existing holdings as [{symbol, value}] or portfolio.json schema [{Ticker, CurrentValuePLN}]")
-    p.add_argument("--max-weight", type=float, default=0.35, help="Max weight per name (0-1)")
+    p.add_argument("--max-weight", type=float, default=0.5, help="Max weight per name (0-1)")
     p.add_argument("--min-score", type=float, default=0.0, help="Drop candidates below this score")
     p.add_argument("--top", type=int, default=0, help="Keep only the top N candidates")
     p.add_argument("--score-power", type=float, default=1.5,

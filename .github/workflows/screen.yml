@@ -46,7 +46,7 @@ on:
       max_weight:
         description: "Max weight per name for allocation, 0-1 (only used when budget > 0)"
         type: string
-        default: "0.35"
+        default: "0.50"
 
 run-name: "Screen ${{ inputs.tickers != '' && inputs.tickers || inputs.preset }} (${{ inputs.horizon }})"
 

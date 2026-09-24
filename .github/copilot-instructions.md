@@ -341,7 +341,7 @@ Consumed by `screen_candidates.py --biznesradar`; caches to
 ### portfolio_allocator.py
 Args: `--budget` (PLN) + `--candidates-file`/`--candidates-json` (screener output
 or `[{symbol,price,score}]`); optional `--holdings-file`, `--top N`, `--min-score N`,
-`--max-weight` (default 0.35), `--score-power` (default 1.5), `--reserve-pct`,
+`--max-weight` (default 0.5), `--score-power` (default 1.5), `--reserve-pct`,
 `--no-sweep`, `--min-fractional-share` (default 0.5), `--min-pos-pct` (default 0,
 drops candidates below this % of budget), `--vol-power` (default 0, inverse-ATR tilt),
 `--max-sector-pct` (default 40, warns when sector exceeds this % of deployed capital),

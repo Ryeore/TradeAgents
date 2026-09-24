@@ -22,7 +22,8 @@ from lib.confidence import (
 ALL_FIELDS = [
     "analyst_upside_pct", "pe_forward", "price_to_book", "dividend_yield_pct",
     "fcf_yield_pct", "roe_pct", "revenue_growth_pct", "operating_margin_pct",
-    "gross_margin_pct", "return_3m_pct", "return_6m_pct", "return_12m_pct",
+    "gross_margin_pct", "earnings_growth_pct", "dividend_growth_pct",
+    "return_3m_pct", "return_6m_pct", "return_12m_pct",
     "price_vs_ma200_pct", "ma50_vs_ma200_pct", "ma200_slope_3m_pct",
     "rsi14", "ma20", "ma50", "ma200", "proximity_52w_high_pct",
     "atr14", "atr_pct_of_price", "max_drawdown_6m_pct", "beta",
