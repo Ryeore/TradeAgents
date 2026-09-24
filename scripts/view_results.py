@@ -144,7 +144,7 @@ def render_screen(screen: dict, top: int) -> tuple[str, str]:
                 if pillar_conf:
                     md.append("")
                     md.append("| Pillar | Overall | Completeness | History | Freshness | Quality | Source |")
-                    md.append("|---|---:|---:|---:|---:|---:|")
+                    md.append("|---|---:|---:|---:|---:|---:|---:|")
                     for p, pc in pillar_conf.items():
                         md.append(
                             f"| {p} | {fmt_num(pc.get('overall'), suffix='%')} | "
